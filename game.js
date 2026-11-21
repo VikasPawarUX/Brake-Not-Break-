@@ -92,7 +92,8 @@ let best = Math.max(0, Number(readStorage('brake.best')) || 0);
 let muted = readStorage('brake.muted') === 'true';
 const guestNickname = readStorage('brake.guestName') || createGuestNickname();
 let driverNickname = readStorage('brake.driverName')?.trim() || guestNickname;
-let spaceHeld = false;
+const brakeKeys = new Set(['Space', 'ArrowDown']);
+const heldBrakeKeys = new Set();
 let audio;
 let run;
 let brakeHintComplete = false;
@@ -345,7 +346,7 @@ function triggerHaptic(type) {
 
 function clearInput() {
   pointers.clear();
-  spaceHeld = false;
+  heldBrakeKeys.clear();
   run.braking = false;
 }
 
@@ -456,7 +457,7 @@ function updateTraffic(dt) {
 
   const playerBefore = player.speed;
 
-  const braking = pointers.size > 0 || spaceHeld;
+  const braking = pointers.size > 0 || heldBrakeKeys.size > 0;
   if (braking && !run.braking) sound('brake');
   run.braking = braking;
   if (braking) {
@@ -905,7 +906,7 @@ function updateBrakeHint() {
 }
 
 function finishBrakeHint() {
-  if (state !== 'running' || brakeHintComplete || !hint.classList.contains('is-held') || spaceHeld || pointers.size) return;
+  if (state !== 'running' || brakeHintComplete || !hint.classList.contains('is-held') || heldBrakeKeys.size || pointers.size) return;
   brakeHintComplete = true;
   hint.classList.add('is-complete');
 }
@@ -965,17 +966,25 @@ game.addEventListener('contextmenu', event => {
   if (!event.target.closest('button')) event.preventDefault();
 });
 window.addEventListener('keydown', event => {
-  if (event.code !== 'Space' || state !== 'running' || event.target.closest?.('button')) return;
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
+      event.shiftKey || driverDialog.open) return;
+  if (event.target.closest?.('button, input, textarea, select, a, [contenteditable], #leaderboard-scores')) return;
+
+  if (event.key === 'Enter' && (state === 'ready' || state === 'over')) {
+    event.preventDefault();
+    if (!event.repeat && !menu.inert) play.click();
+    return;
+  }
+
+  if (state !== 'running' || !brakeKeys.has(event.code)) return;
   event.preventDefault();
   if (!event.repeat) {
     primeAudio();
-    spaceHeld = true;
+    heldBrakeKeys.add(event.code);
   }
 });
 window.addEventListener('keyup', event => {
-  if (event.code !== 'Space' || !spaceHeld) return;
-  spaceHeld = false;
-  finishBrakeHint();
+  if (heldBrakeKeys.delete(event.code)) finishBrakeHint();
 });
 
 function interruptFrame() {
