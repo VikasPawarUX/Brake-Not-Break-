@@ -1,4 +1,4 @@
-# BRAKE!
+# BRAKE, NOT BREAK!
 
 One road. Five cars. One brake.
 
@@ -14,7 +14,7 @@ Open `http://localhost:8000` on your computer. On a phone connected to the same 
 
 ## Play
 
-Select **Play**. Hold a finger, the primary mouse button, or Space to brake. Release to pick up speed downhill. Two traffic cars travel ahead and two behind. Each run draws five distinct silhouettes from a set of seven, with the same bumper dimensions for every shape. Watch the front pair’s brake lights and the rear pair closing up for early signs of pressure. Red outlines show when the nearest car on either side is getting close. A short tick and a fading outline mark a successful near miss. A bumper collision ends the run. Select **Retry** to start immediately. The best distance and sound preference are saved in local storage when the browser allows it.
+Select **Start** to drive the car shown at score zero. Hold a finger, the primary mouse button, or Space to brake. Release to pick up speed downhill. Two traffic cars travel ahead and two behind. Each run draws five distinct silhouettes from a set of seven, with the same bumper dimensions for every shape. Watch the front pair’s brake lights and the rear pair closing up for early signs of pressure. Red outlines show when the nearest car on either side is getting close. A short tick and a fading outline mark a successful near miss. A bumper collision ends the run. Select **Retry** to start immediately. The best distance and sound preference are saved in local storage when the browser allows it.
 
 ## Locked gameplay settings
 
@@ -32,4 +32,4 @@ Select **Play**. Hold a finger, the primary mouse button, or Space to brake. Rel
 | AI aggression | 34 |
 | Difficulty progression | 1 |
 
-The game uses these values on every run. Gaps are measured bumper to bumper. Speed uses road units per second, and acceleration uses road units per second squared. The road is straight and downhill. The live distance sits above your car, and roadside posts become checkmarks as you pass them every 20 metres.
+The game uses these values on every run. Gaps are measured bumper to bumper. Speed uses road units per second, and acceleration uses road units per second squared. The road is straight and downhill. The live distance stays in one spot behind the mountains and rolls upward in 5-metre steps. On a collision, the score freezes at the exact final distance and Retry appears. Your best score stays in the top-left corner. Roadside posts become checkmarks as you pass them every 20 metres.

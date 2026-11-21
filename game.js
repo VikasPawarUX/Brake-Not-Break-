@@ -3,18 +3,17 @@
 const game = document.querySelector('#game');
 const canvas = document.querySelector('#road');
 const ink = canvas.getContext('2d');
-const menu = document.querySelector('#menu');
-const title = document.querySelector('#game-title');
-const message = document.querySelector('#message');
 const play = document.querySelector('#play');
+const menu = document.querySelector('.menu');
 const hint = document.querySelector('#hint');
 const distance = document.querySelector('#distance');
-const liveDistance = document.querySelector('#live-distance');
 const bestOutput = document.querySelector('#best');
 const mute = document.querySelector('#mute');
+const soundIcon = document.querySelector('#sound-icon');
 
 const ANGLE = Math.PI / 12;
 const CAR_SCALE = 1.25;
+const CAMERA_ZOOM = 1.4;
 const BODY_HALF_LENGTH = 27;
 const HALF_LENGTH = BODY_HALF_LENGTH * CAR_SCALE;
 const OUTER_GAP = 27;
@@ -23,6 +22,8 @@ const WHEEL_OFFSETS = [-16 * CAR_SCALE, 16 * CAR_SCALE];
 const TURN = 2 * Math.PI;
 const STEP = 1 / 120;
 const METERS_PER_UNIT = 0.12;
+const SCORE_STEP_METERS = 5;
+const SCORE_ROLL_DURATION = 0.15;
 const MILESTONE_METERS = 20;
 const MILESTONE_INTERVAL = MILESTONE_METERS / METERS_PER_UNIT;
 const STAMP_DURATION = 0.56;
@@ -51,6 +52,15 @@ const settings = Object.freeze({
   aggression: 34,
   progression: 1,
 });
+const palette = {
+  background: '#000000', score: '#ffffff',
+  nearMountain: '#17171b', farMountain: '#2b2b30',
+  road: '#727272', stone: '#444444', brightStone: '#5c5c5c',
+  milestonePost: '#707070', milestoneText: '#939393',
+  check: '#a0a0a0', stamp: '#d8d8d8',
+  outerCar: '#777777', traffic: [145, 145, 145], danger: [255, 73, 73],
+  warning: '#ff4949', brakeLight: '#ff4e4e',
+};
 const pointers = new Set();
 
 function readStorage(key) {
@@ -70,6 +80,7 @@ let run;
 let runs = 0;
 let impactTime = 0;
 let lastFrame = null;
+let idleTime = 0;
 let windowActive = true;
 let accumulator = 0;
 let width = 0;
@@ -143,6 +154,7 @@ function freshRun() {
     },
     lastNearMiss: -Infinity,
     milestoneStamp: null,
+    scoreRoll: { current: 0, previous: 0, startedAt: 0 },
   };
 }
 
@@ -161,7 +173,7 @@ function setState(next) {
   state = next;
   game.dataset.state = next;
   menu.hidden = next === 'running' || next === 'impact';
-  liveDistance.hidden = !menu.hidden;
+  mute.hidden = menu.hidden;
   hint.hidden = next !== 'running' || runs !== 1;
 }
 
@@ -207,7 +219,7 @@ function clearInput() {
 
 function start() {
   primeAudio();
-  run = freshRun();
+  if (state !== 'ready') run = freshRun();
   runs++;
   accumulator = 0;
   lastFrame = null;
@@ -354,6 +366,10 @@ function simulate(dt) {
   if (passedMarker > previousMarker) {
     run.milestoneStamp = { marker: passedMarker, age: 0 };
   }
+  const displayScore = Math.floor(score() / SCORE_STEP_METERS) * SCORE_STEP_METERS;
+  if (displayScore !== run.scoreRoll.current) {
+    run.scoreRoll = { current: displayScore, previous: run.scoreRoll.current, startedAt: run.time };
+  }
   if (firstContact <= 1) {
     collide(frontContact <= rearContact ? 'front' : 'rear');
   } else {
@@ -385,7 +401,7 @@ function resize() {
   pixelRatio = Math.min(window.devicePixelRatio || 1, 2.5);
   canvas.width = Math.round(width * pixelRatio);
   canvas.height = Math.round(height * pixelRatio);
-  scale = clamp(width / 495, 0.45, 1.45);
+  scale = clamp(width / 495, 0.45, 1.45) * CAMERA_ZOOM;
 }
 
 function drawMilestoneCheck(age) {
@@ -393,10 +409,12 @@ function drawMilestoneCheck(age) {
     const progress = (age - 0.12) / (STAMP_DURATION - 0.12);
     const radius = 4 + 13 * (1 - (1 - progress) ** 2);
     ink.lineWidth = 1.15;
-    ink.strokeStyle = `rgba(216, 216, 216, ${0.65 * (1 - progress)})`;
+    ink.strokeStyle = palette.stamp;
+    ink.globalAlpha = 0.65 * (1 - progress);
     ink.beginPath();
     ink.arc(0.5, -4.5, radius, 0, TURN);
     ink.stroke();
+    ink.globalAlpha = 1;
   }
 
   if (age < 0.18) {
@@ -410,7 +428,7 @@ function drawMilestoneCheck(age) {
   ink.lineWidth = 1.5;
   ink.lineJoin = 'round';
   ink.lineCap = 'round';
-  ink.strokeStyle = age < STAMP_DURATION ? '#d8d8d8' : '#a0a0a0';
+  ink.strokeStyle = age < STAMP_DURATION ? palette.stamp : palette.check;
   ink.beginPath();
   ink.moveTo(-4, -4);
   ink.lineTo(-1, -1);
@@ -422,7 +440,7 @@ function drawRoad(origin) {
   const start = origin - width / scale - 20;
   const end = origin + width / scale + 20;
   ink.lineWidth = 1 / scale;
-  ink.strokeStyle = '#727272';
+  ink.strokeStyle = palette.road;
   ink.beginPath();
   ink.moveTo(start - origin, roadHeight(start));
   for (let position = start + 3; position <= end; position += 3) {
@@ -435,7 +453,7 @@ function drawRoad(origin) {
   for (let cell = Math.floor(start / spacing); cell * spacing < end; cell++) {
     const position = cell * spacing + 12 + 18 * Math.sin(cell * 12.9898);
     const offset = 7 + 9 * Math.abs(Math.sin(cell * 4.23));
-    ink.fillStyle = cell % 3 === 0 ? '#5c5c5c' : '#444';
+    ink.fillStyle = cell % 3 === 0 ? palette.brightStone : palette.stone;
     ink.beginPath();
     ink.ellipse(position - origin, roadHeight(position) + offset,
       cell % 3 === 0 ? 2.2 : 1.2, 0.85, 0, 0, TURN);
@@ -455,9 +473,9 @@ function drawRoad(origin) {
       drawMilestoneCheck(stamp?.marker === marker ? stamp.age : Infinity);
     } else {
       ink.lineWidth = 1;
-      ink.strokeStyle = '#707070';
+      ink.strokeStyle = palette.milestonePost;
       ink.strokeRect(-1.5, -9.5, 3, 10);
-      ink.fillStyle = '#939393';
+      ink.fillStyle = palette.milestoneText;
       ink.fillRect(-1, -9, 2, 2);
       ink.font = '500 10px "Martian Mono", monospace';
       ink.textAlign = 'center';
@@ -491,7 +509,7 @@ function drawCar(car, origin, color, light = 0, brakePitch = 0) {
   ink.lineCap = 'round';
   ink.lineWidth = 1.5 / scale;
   ink.strokeStyle = color;
-  ink.fillStyle = '#000';
+  ink.fillStyle = palette.background;
 
   ink.save();
   ink.translate(0, chassisHeight - 8 * CAR_SCALE);
@@ -507,7 +525,8 @@ function drawCar(car, origin, color, light = 0, brakePitch = 0) {
   ink.stroke();
   // The lamp follows the rear corner of the existing body outline.
   if (light > 0) {
-    ink.strokeStyle = `rgba(255, 78, 78, ${light})`;
+    ink.strokeStyle = palette.brakeLight;
+    ink.globalAlpha = light;
     ink.lineWidth = 2 / (scale * CAR_SCALE);
     ink.beginPath();
     const [[cornerX, cornerY], [shoulderX, shoulderY]] = car.profile;
@@ -531,47 +550,170 @@ function drawCar(car, origin, color, light = 0, brakePitch = 0) {
 function dangerColor(gap, closing, glow) {
   const threshold = 9 + Math.max(0, closing) * 0.52;
   const danger = Math.max(glow * 0.65, clamp((threshold - gap + 12) / 20, 0, 1));
-  const red = Math.round(145 + 110 * danger);
-  const green = Math.round(145 - 72 * danger);
-  return `rgb(${red}, ${green}, ${green})`;
+  const channels = palette.traffic.map((channel, index) =>
+    Math.round(channel + (palette.danger[index] - channel) * danger));
+  return `rgb(${channels.join(', ')})`;
+}
+
+function scoreFontSize() {
+  const desktopSize = Math.min(150, width * 0.22, height * 0.16);
+  if (width > 560) return desktopSize;
+  return Math.max(desktopSize, Math.min(width * 0.29, 118, height * 0.20));
+}
+
+function sceneryLift() {
+  return Math.min(height * 0.045, 42);
+}
+
+function scoreBaseline(fontSize) {
+  if (width <= 560) return height * 0.29 + fontSize * 0.10 - sceneryLift();
+  return height * mountainRanges[0].heightRatio
+    - clamp(height * 0.20, 42, 160) * 0.90 + fontSize * 0.20 - sceneryLift();
+}
+
+function ridgePointHeight(point, range) {
+  const wave = 0.52 + 0.32 * Math.sin(point * 0.81 + range.phase)
+    + 0.16 * Math.sin(point * 1.97 - range.phase);
+  const relief = clamp(height * 0.20, 42, 160);
+  if (width <= 560) {
+    if (range.color === 'farMountain') {
+      const fontSize = scoreFontSize();
+      // Keep a shallow overlap at the bottom of the fixed score.
+      return scoreBaseline(fontSize) - 6 - Math.min(fontSize * 0.30, 32) * wave;
+    }
+    return height * range.heightRatio - relief * wave - Math.min(height * 0.07, 56) - sceneryLift();
+  }
+  return height * range.heightRatio - relief * wave - sceneryLift();
+}
+
+function drawMountainRange(position, range) {
+  const step = clamp(width * range.spacing, 45, 145);
+  const shift = position * scale * range.parallax;
+  const first = Math.floor(shift / step);
+  const last = Math.ceil((shift + width) / step);
+
+  ink.fillStyle = palette[range.color];
+  ink.beginPath();
+  ink.moveTo(0, height);
+  for (let point = first; point <= last; point++) {
+    ink.lineTo(point * step - shift, ridgePointHeight(point, range));
+  }
+  ink.lineTo(width, height);
+  ink.closePath();
+  ink.fill();
+}
+
+const mountainRanges = [
+  { color: 'farMountain', parallax: 0.09, spacing: 0.17, heightRatio: 0.49, phase: 1.2 },
+  { color: 'nearMountain', parallax: 0.19, spacing: 0.13, heightRatio: 0.59, phase: 3.4 },
+];
+
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+
+function drawRunScore() {
+  const rolling = state === 'running' && !reducedMotion?.matches;
+  const displayed = state === 'running' ? run.scoreRoll.current : score();
+  const digits = String(displayed);
+  const previous = String(run.scoreRoll.previous).padStart(digits.length);
+  const fontSize = scoreFontSize();
+  const center = width / 2;
+  const baseline = scoreBaseline(fontSize);
+  ink.save();
+  ink.textAlign = 'center';
+  ink.textBaseline = 'alphabetic';
+
+  ink.font = `500 ${fontSize}px "Martian Mono", monospace`;
+  ink.fillStyle = palette.score;
+  const digitWidth = fontSize * 0.62;
+  const progress = rolling
+    ? clamp((run.time - run.scoreRoll.startedAt) / SCORE_ROLL_DURATION, 0, 1)
+    : 1;
+  const slide = progress * progress * (3 - 2 * progress);
+
+  for (let index = 0; index < digits.length; index++) {
+    const x = center + (index - (digits.length - 1) / 2) * digitWidth;
+    if (slide < 1 && digits[index] !== previous[index]) {
+      ink.globalAlpha = (1 - slide) ** 2.5;
+      ink.fillText(previous[index], x, baseline - slide * fontSize * 0.24);
+      ink.globalAlpha = slide;
+      ink.fillText(digits[index], x, baseline + (1 - slide) * fontSize * 0.52);
+      ink.globalAlpha = 1;
+    } else {
+      ink.fillText(digits[index], x, baseline);
+    }
+  }
+  ink.restore();
+}
+
+function drawCollisionWarning(playerPosition) {
+  const contact = run.impact === 'front' ? HALF_LENGTH : -HALF_LENGTH;
+  const pop = reducedMotion?.matches ? 1 : clamp(impactTime / 0.14, 0, 1);
+  const jiggle = reducedMotion?.matches ? 1 : clamp(impactTime / 0.34, 0, 1);
+  const tilt = Math.sin(jiggle * TURN * 2.5) * 0.28 * (1 - jiggle) ** 1.5;
+  const size = (0.72 + 0.28 * (1 - (1 - pop) ** 2)) / scale;
+
+  ink.save();
+  ink.translate(contact, roadHeight(playerPosition + contact) - 17 * CAR_SCALE);
+  ink.rotate(-ANGLE);
+  ink.scale(size, size);
+  ink.translate(0, -13);
+  ink.rotate(tilt);
+  ink.translate(0, 13);
+  ink.fillStyle = palette.background;
+  ink.strokeStyle = palette.warning;
+  ink.lineWidth = 2;
+  ink.lineJoin = 'round';
+  ink.lineCap = 'round';
+  ink.beginPath();
+  ink.moveTo(0, -24);
+  ink.lineTo(13, -2);
+  ink.lineTo(-13, -2);
+  ink.closePath();
+  ink.fill();
+  ink.stroke();
+
+  ink.beginPath();
+  ink.moveTo(0, -16);
+  ink.lineTo(0, -10);
+  ink.stroke();
+  ink.fillStyle = palette.warning;
+  ink.beginPath();
+  ink.arc(0, -6, 1.15, 0, TURN);
+  ink.fill();
+  ink.restore();
 }
 
 function render() {
   ink.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ink.clearRect(0, 0, width, height);
+  const { front, player, rear } = run;
+  drawRunScore();
+  const idleDrift = reducedMotion?.matches ? 0 : Math.sin(idleTime * 0.55) * 110;
+  const driftBlend = state === 'ready' ? 1 : Math.max(0, 1 - run.time / 0.8);
+  const backdropPosition = player.position + idleDrift * driftBlend;
+  for (const range of mountainRanges) drawMountainRange(backdropPosition, range);
   ink.translate(width / 2, height * 0.51);
   ink.rotate(ANGLE);
   ink.scale(scale, scale);
-  const { front, player, rear } = run;
   drawRoad(player.position);
 
   const gap = gaps();
-  const frontColor = run.impact === 'front' ? '#ff4949'
+  const frontColor = run.impact === 'front' ? palette.warning
     : dangerColor(gap.front, player.speed - front.speed, run.nearMiss.front.glow);
-  const rearColor = run.impact === 'rear' ? '#ff4949'
+  const rearColor = run.impact === 'rear' ? palette.warning
     : dangerColor(gap.rear, rear.speed - player.speed, run.nearMiss.rear.glow);
 
-  drawCar(run.tail, player.position, '#777');
-  drawCar(run.lead, player.position, '#777', run.lead.brakeLight);
+  drawCar(run.tail, player.position, palette.outerCar);
   drawCar(rear, player.position, rearColor);
-  drawCar(front, player.position, frontColor, front.brakeLight);
-  drawCar(player, player.position, run.impact ? '#ff4949' : '#fff',
+  drawCar(player, player.position, run.impact ? palette.warning : palette.score,
     Number(run.braking), run.brakePitch);
+  drawCar(front, player.position, frontColor, front.brakeLight);
+  drawCar(run.lead, player.position, palette.outerCar, run.lead.brakeLight);
 
-  if (state === 'impact') {
-    const progress = impactTime / IMPACT_DURATION;
-    ink.strokeStyle = `rgba(255, 73, 73, ${1 - progress})`;
-    ink.lineWidth = 2 / scale;
-    ink.beginPath();
-    const bumper = run.impact === 'front' ? HALF_LENGTH : -HALF_LENGTH;
-    ink.arc(bumper, roadHeight(player.position + bumper) - 10 * CAR_SCALE, 4 + 24 * progress, 0, TURN);
-    ink.stroke();
-  }
+  if (run.impact) drawCollisionWarning(player.position);
 }
 
-function showGameOver() {
-  title.textContent = 'Game Over';
-  message.textContent = `${score()} m travelled · Best ${best} m`;
+function finishRun() {
   play.textContent = 'Retry';
   setState('over');
 }
@@ -582,6 +724,7 @@ function frame(now) {
   } else {
     const dt = lastFrame === null ? 0 : Math.min((now - lastFrame) / 1000, 0.05);
     lastFrame = now;
+    if (state === 'ready' && !reducedMotion?.matches) idleTime += dt;
     if (run.milestoneStamp) {
       run.milestoneStamp.age += dt;
       if (run.milestoneStamp.age >= STAMP_DURATION) run.milestoneStamp = null;
@@ -595,7 +738,7 @@ function frame(now) {
       updateScore();
     } else if (state === 'impact') {
       impactTime += dt;
-      if (impactTime >= IMPACT_DURATION) showGameOver();
+      if (impactTime >= IMPACT_DURATION) finishRun();
     }
     render();
   }
@@ -603,7 +746,7 @@ function frame(now) {
 }
 
 function updateMute() {
-  mute.textContent = muted ? 'Sound off' : 'Sound on';
+  soundIcon.src = muted ? 'assets/icon/sound%20off.svg' : 'assets/icon/sound%20on.svg';
   mute.setAttribute('aria-pressed', String(muted));
 }
 
@@ -662,6 +805,7 @@ mute.addEventListener('click', () => {
   mute.blur();
 });
 
+document.fonts?.load('500 16px "Martian Mono"').catch(() => {});
 run = freshRun();
 updateScore();
 updateMute();

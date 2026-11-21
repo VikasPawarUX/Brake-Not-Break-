@@ -18,8 +18,12 @@
   color-scheme: dark;
   font-family: "Martian Mono", ui-monospace, monospace;
   font-weight: 300;
-  background: #000;
-  color: #fff;
+  --background: #000;
+  --foreground: #fff;
+  --secondary: #bbb;
+  --border: #555;
+  background: var(--background);
+  color: var(--foreground);
   --edge-top: max(12px, env(safe-area-inset-top));
   --edge-right: max(16px, env(safe-area-inset-right));
   --edge-bottom: max(14px, env(safe-area-inset-bottom));
@@ -51,17 +55,11 @@ html, body, #game {
   touch-action: none;
 }
 
-.hud, .tools {
+.hud {
   position: absolute;
   top: var(--edge-top);
-  display: flex;
-  align-items: center;
-  gap: clamp(12px, 3vw, 32px);
-}
-
-.hud {
   left: var(--edge-left);
-  color: #aaa;
+  color: var(--secondary);
   font-size: .75rem;
   letter-spacing: .1em;
   text-transform: uppercase;
@@ -72,7 +70,7 @@ html, body, #game {
 .hud output {
   display: block;
   margin-top: .2rem;
-  color: #fff;
+  color: var(--foreground);
   font-size: clamp(1rem, 3vw, 1.3rem);
   letter-spacing: 0;
   text-transform: none;
@@ -80,83 +78,62 @@ html, body, #game {
 
 .live-distance {
   position: absolute;
-  top: calc(51% - clamp(43px, 7vw, 66px));
-  left: calc(50% + 4px);
-  display: grid;
-  justify-items: center;
-  gap: 3px;
-  transform: translate(-50%, -100%);
-  color: #fff;
-  font-size: 1rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
-  pointer-events: none;
 }
-
-.distance-leader {
-  height: 13px;
-  border-left: 2px dotted #a0a0a0;
-}
-
-.tools { right: var(--edge-right); gap: 8px; }
 
 button {
   min-height: 44px;
   padding: 0 12px;
-  border: 1px solid #555;
-  border-radius: 3px;
-  background: #000;
-  color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--background);
+  color: var(--foreground);
   font: inherit;
   cursor: pointer;
   touch-action: manipulation;
 }
 
 button:focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid var(--foreground);
   outline-offset: 4px;
 }
 
-#mute { font-size: .8rem; }
-
 .menu {
+  --start-height: 44px;
   position: absolute;
-  inset: 0;
-  text-align: center;
+  top: min(65%, calc(100% - var(--edge-bottom) - var(--start-height)));
+  left: 50%;
+  width: min(248px, calc(100% - var(--edge-left) - var(--edge-right)));
+  display: grid;
+  transform: translateX(-50%);
   pointer-events: none;
 }
 
-.menu-copy {
+.sound-toggle {
   position: absolute;
-  inset-inline: var(--edge-left) var(--edge-right);
-  bottom: 60%;
+  top: var(--edge-top);
+  right: var(--edge-right);
+  display: grid;
+  width: 44px;
+  padding: 0;
+  place-items: center;
 }
 
-h1 {
-  margin: 0;
-  font-size: clamp(2.6rem, min(15vw, 17vh), 8rem);
-  font-weight: 500;
-  letter-spacing: -.075em;
-  line-height: .95;
-}
-
-.menu p {
-  margin: .65rem 0 0;
-  color: #bbb;
-  font-size: clamp(.875rem, 2.8vw, 1rem);
+.sound-toggle img {
+  filter: brightness(0) invert(1);
 }
 
 .primary {
-  position: absolute;
-  top: 65%;
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 136px;
+  min-height: var(--start-height);
+  justify-self: stretch;
   padding: 0 24px;
-  border-color: #fff;
-  background: #fff;
-  color: #000;
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
   font-weight: 500;
   letter-spacing: .14em;
   text-transform: uppercase;
@@ -168,7 +145,7 @@ h1 {
   inset-inline: var(--edge-left) var(--edge-right);
   bottom: var(--edge-bottom);
   margin: 0;
-  color: #bbb;
+  color: var(--secondary);
   font-size: .875rem;
   letter-spacing: .16em;
   text-align: center;
@@ -176,7 +153,10 @@ h1 {
   pointer-events: none;
 }
 
-@media (max-height: 360px) {
-  .menu-copy { bottom: 57%; }
-  .primary { top: 67%; }
+@media (max-width: 560px) {
+  .hud { font-size: .8125rem; }
+  .hud output { font-size: 1.15rem; }
+  .menu { --start-height: 52px; }
+  .primary { font-size: 1.125rem; }
+  #hint { font-size: .9375rem; }
 }
