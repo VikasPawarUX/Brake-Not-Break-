@@ -55,27 +55,6 @@ html, body, #game {
   touch-action: none;
 }
 
-.hud {
-  position: absolute;
-  top: var(--edge-top);
-  left: var(--edge-left);
-  color: var(--secondary);
-  font-size: .75rem;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
-.hud output {
-  display: block;
-  margin-top: .2rem;
-  color: var(--foreground);
-  font-size: clamp(1rem, 3vw, 1.3rem);
-  letter-spacing: 0;
-  text-transform: none;
-}
-
 .live-distance {
   position: absolute;
   width: 1px;
@@ -102,61 +81,311 @@ button:focus-visible {
   outline-offset: 4px;
 }
 
+#game:is([data-state="ready"], [data-state="over"]) { touch-action: auto; }
+
 .menu {
-  --start-height: 44px;
   position: absolute;
-  top: min(65%, calc(100% - var(--edge-bottom) - var(--start-height)));
-  left: 50%;
-  width: min(248px, calc(100% - var(--edge-left) - var(--edge-right)));
+  inset: auto 0 0;
   display: grid;
-  transform: translateX(-50%);
+  gap: clamp(24px, 5vh, 48px);
+  padding-bottom: var(--edge-bottom);
+  background: linear-gradient(transparent, #000 80%);
   pointer-events: none;
 }
 
-.sound-toggle {
-  position: absolute;
-  top: var(--edge-top);
-  right: var(--edge-right);
+.control-panel {
+  justify-self: end;
+  width: min(400px, calc(100% - var(--edge-left) - var(--edge-right)));
+  margin-inline-end: var(--edge-right);
+  padding: clamp(16px, 3.5vw, 26px);
+  border: 3px solid #404040;
+  background: var(--background);
+  pointer-events: auto;
+}
+
+.crash-label {
+  display: inline-block;
+  margin: 0 0 16px;
+  padding: 6px 8px;
+  background: #f00;
+  color: #fff;
+  font-size: .8rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.panel-stats {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 24px;
+  font-size: clamp(.875rem, 2.6vw, 1rem);
+}
+
+.panel-stats div { display: flex; gap: .65ch; }
+.panel-stats dt { color: var(--secondary); }
+.panel-stats dd { margin: 0; }
+
+.panel-stats .panel-best {
+  flex-direction: column-reverse;
+  gap: 8px;
+}
+
+#panel-best {
+  color: var(--foreground);
+  font-size: clamp(1.9rem, min(9vw, 10vh), 3.125rem);
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.panel-actions {
+  --control-size: clamp(50px, 9vh, 60px);
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: clamp(8px, 2vw, 12px);
+}
+
+.icon-button {
   display: grid;
   width: 44px;
   padding: 0;
   place-items: center;
 }
 
-.sound-toggle img {
-  filter: brightness(0) invert(1);
+.panel-actions button { min-height: var(--control-size); }
+
+.panel-actions .icon-button {
+  width: var(--control-size);
+  border: 3px solid #404040;
 }
 
-.primary {
-  min-height: var(--start-height);
-  justify-self: stretch;
-  padding: 0 24px;
+.panel-actions img {
+  width: calc(var(--control-size) * .62);
+  height: auto;
+  flex-shrink: 0;
+}
+
+.icon-button img { filter: brightness(0) invert(1); }
+
+#driver-dialog {
+  width: min(380px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 22px;
+  border: 1px solid var(--border);
+  background: #000;
+  color: var(--foreground);
+}
+
+#driver-dialog::backdrop { background: rgb(0 0 0 / .78); }
+
+#driver-dialog[open] { animation: results-content-in 160ms ease-out both; }
+
+#driver-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+#driver-name {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 1rem;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#driver-name:focus { outline: 1px solid var(--secondary); }
+
+#driver-name-description {
+  margin: 10px 0 18px;
+  color: var(--secondary);
+  font-size: .8rem;
+  line-height: 1.5;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.save-driver {
   border-color: var(--foreground);
   background: var(--foreground);
   color: var(--background);
   font-weight: 500;
-  letter-spacing: .14em;
+}
+
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(4px, 1.5vw, 10px);
+  padding: 0 4px;
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: clamp(.9rem, 3vw, 1.1rem);
+  font-weight: 500;
+  letter-spacing: .08em;
   text-transform: uppercase;
   pointer-events: auto;
+  animation: play-idle-jiggle 4.8s ease-in-out 1s infinite;
 }
 
 #hint {
   position: absolute;
-  inset-inline: var(--edge-left) var(--edge-right);
-  bottom: var(--edge-bottom);
-  margin: 0;
+  top: calc(51% + clamp(64px, 11vh, 104px) + 56px);
+  left: 50%;
+  transform: translateX(-50%);
   color: var(--secondary);
   font-size: .875rem;
-  letter-spacing: .16em;
-  text-align: center;
-  text-transform: uppercase;
   pointer-events: none;
+  transition: opacity 220ms ease-out;
 }
 
-@media (max-width: 560px) {
-  .hud { font-size: .8125rem; }
-  .hud output { font-size: 1.15rem; }
-  .menu { --start-height: 52px; }
-  .primary { font-size: 1.125rem; }
-  #hint { font-size: .9375rem; }
+#hint.is-complete { opacity: 0; }
+
+.hint-release,
+#hint.is-held .hint-hold { display: none; }
+#hint.is-held .hint-release { display: inline; }
+
+#game[data-state="over"] .menu {
+  animation: results-fade-in 220ms ease-out both;
+}
+
+#game[data-state="over"] .control-panel {
+  animation: results-content-in 240ms ease-out both;
+}
+
+#leaderboard {
+  --strip-gap: clamp(6px, 1.5vw, 16px);
+  min-width: 0;
+  pointer-events: auto;
+  background: var(--background);
+}
+
+#leaderboard-title,
+#leaderboard-status {
+  margin-inline: calc(var(--edge-left) + 44px + var(--strip-gap)) var(--edge-right);
+}
+
+#leaderboard-title {
+  margin-block: 0 16px;
+  color: var(--secondary);
+  font-size: .7rem;
+  font-weight: 500;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+#leaderboard-status {
+  min-height: 40px;
+  margin-block: 0;
+  padding-top: 8px;
+  color: var(--secondary);
+  font-size: .75rem;
+}
+
+#leaderboard-status:empty { display: none; }
+
+.leaderboard-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--strip-gap);
+  padding-inline: var(--edge-left) var(--edge-right);
+}
+
+.leaderboard-strip button {
+  color: var(--secondary);
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.leaderboard-strip button:disabled {
+  opacity: .3;
+  cursor: default;
+}
+
+#leaderboard-scores {
+  display: flex;
+  gap: clamp(20px, 4vw, 44px);
+  margin: 0;
+  padding: 4px 0 12px;
+  overflow-x: auto;
+  list-style: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  font-variant-numeric: tabular-nums;
+}
+
+#leaderboard-scores:focus-visible {
+  outline: 1px solid var(--secondary);
+  outline-offset: -1px;
+}
+
+#leaderboard-scores li {
+  flex: 0 0 auto;
+  width: clamp(145px, 22vw, 210px);
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  color: var(--secondary);
+  font-size: clamp(.875rem, 2.3vw, 1rem);
+}
+
+#leaderboard-scores strong {
+  color: var(--foreground);
+  font-size: clamp(1.75rem, 5vw, 2.65rem);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.leaderboard-driver { overflow-wrap: anywhere; }
+
+.menu[inert] .primary,
+.primary:active { animation: none; }
+
+@keyframes play-idle-jiggle {
+  0%, 88%, 100% { transform: rotate(0); }
+  90% { transform: rotate(-1.4deg); }
+  92% { transform: rotate(1.15deg); }
+  94% { transform: rotate(-.7deg); }
+  96% { transform: rotate(.35deg); }
+  98% { transform: rotate(0); }
+}
+
+@keyframes results-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes results-content-in {
+  from { transform: translateY(7px); }
+  to { transform: translateY(0); }
+}
+
+@media (max-height: 420px) {
+  .menu { gap: 18px; }
+  .control-panel { padding: 12px 16px; }
+  .crash-label { margin-bottom: 8px; }
+  .panel-stats { margin-bottom: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #game[data-state="over"] .menu,
+  #game[data-state="over"] .control-panel,
+  .primary,
+  #driver-dialog[open] { animation: none; }
+  #hint { transition: none; }
+  #leaderboard-scores { scroll-behavior: auto; }
 }

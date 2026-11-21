@@ -4,24 +4,63 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
-  <title>BRAKE, NOT BREAK!</title>
+  <title>Bumper to Bumper</title>
   <link rel="stylesheet" href="style.css">
+  <script src="leaderboard-config.js" defer></script>
+  <script src="leaderboard.js" defer></script>
   <script src="game.js" defer></script>
 </head>
 <body>
-  <main id="game" aria-label="BRAKE, NOT BREAK! Downhill braking game" data-state="ready">
+  <main id="game" aria-label="Bumper to Bumper Downhill braking game" data-state="ready">
     <canvas id="road" aria-hidden="true"></canvas>
-    <output id="distance" class="live-distance" aria-label="Current distance" aria-live="off">0 m</output>
-    <header class="hud" aria-label="Best score">
-      <div>Best <output id="best">0 m</output></div>
-    </header>
-    <button id="mute" class="sound-toggle" type="button" aria-label="Mute sound" aria-pressed="false">
-      <img id="sound-icon" src="assets/icon/sound%20on.svg" alt="" width="24" height="24">
-    </button>
+    <output id="distance" class="live-distance" aria-label="Current distance" aria-live="off">0m</output>
     <div class="menu">
-      <button class="primary" id="play" type="button">Start</button>
+      <section class="control-panel" aria-label="Game controls">
+        <p id="crash-label" class="crash-label" hidden>Crashed!</p>
+        <dl class="panel-stats">
+          <div class="panel-best"><dt>Best Score</dt><dd id="panel-best">0m</dd></div>
+          <div id="rank-stat" hidden><dt>Rank</dt><dd id="player-rank"></dd></div>
+        </dl>
+        <div class="panel-actions">
+          <button id="mute" class="icon-button" type="button" aria-label="Mute sound" aria-pressed="false">
+            <img id="sound-icon" src="assets/icon/sound%20on.svg" alt="" width="24" height="24">
+          </button>
+          <button id="edit-driver" class="icon-button" type="button" aria-label="Edit driver name" aria-haspopup="dialog">
+            <img src="assets/icon/driver.svg" alt="" width="24" height="24">
+          </button>
+          <button class="primary" id="play" type="button">
+            <img id="play-icon" src="assets/icon/start.svg" alt="" width="22" height="22">
+            <span id="play-label">Start</span>
+          </button>
+        </div>
+      </section>
+      <section id="leaderboard" aria-labelledby="leaderboard-title">
+        <h2 id="leaderboard-title">Top 10 drivers</h2>
+        <p id="leaderboard-status" role="status"></p>
+        <div class="leaderboard-strip" hidden>
+          <button id="scores-prev" class="icon-button" type="button" aria-label="Scroll leaderboard left" aria-controls="leaderboard-scores">‹</button>
+          <ol id="leaderboard-scores" tabindex="0" aria-label="Leaderboard, best scores first"></ol>
+          <button id="scores-next" class="icon-button" type="button" aria-label="Scroll leaderboard right" aria-controls="leaderboard-scores">›</button>
+        </div>
+      </section>
     </div>
-    <p id="hint" hidden>Hold to brake</p>
+    <dialog id="driver-dialog" aria-labelledby="driver-dialog-title">
+      <form id="driver-form" method="dialog">
+        <h2 id="driver-dialog-title"><label for="driver-name">Driver name</label></h2>
+        <input id="driver-name" name="driverName" type="text" placeholder="Public nickname"
+          maxlength="24" autocomplete="nickname" enterkeyhint="done" spellcheck="false"
+          aria-describedby="driver-name-description" autofocus>
+        <p id="driver-name-description">Change your name here. This is the name everyone will see on the leaderboards.</p>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-driver">Cancel</button>
+          <button type="submit" class="save-driver">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="hint" aria-hidden="true" hidden>
+      <span class="hint-hold">[HOLD]</span>
+      <span class="hint-release">[RELEASE]</span>
+    </div>
   </main>
 </body>
 </html>

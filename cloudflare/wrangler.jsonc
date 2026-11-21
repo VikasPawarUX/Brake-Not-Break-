@@ -1,0 +1,21 @@
+{
+  "name": "bumper-to-bumper",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-21",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/btb", "/btb/api/*"]
+  },
+  "routes": [
+    { "pattern": "www.vikaspawar.online/btb", "zone_name": "vikaspawar.online" },
+    { "pattern": "www.vikaspawar.online/btb/*", "zone_name": "vikaspawar.online" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bumper-to-bumper",
+      "database_id": "de87299c-14bd-4d50-8bc1-c2f9f4f57c09"
+    }
+  ]
+}
