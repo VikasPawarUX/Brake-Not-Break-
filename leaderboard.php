@@ -55,7 +55,8 @@ if ($method === 'POST') {
     $name = is_string($input['name'] ?? null) ? trim($input['name']) : '';
     $meters = $input['meters'] ?? null;
     $token = $input['token'] ?? null;
-    if (!preg_match('/\A[^\p{Cc}]{1,24}\z/u', $name) ||
+    if ((!preg_match('/\A[^\p{Cc}]+\z/u', $name) ||
+         (!preg_match('/\AGuest \d{10}\z/u', $name) && preg_match_all('/\X/u', $name) > 15)) ||
         !is_int($meters) || $meters < 0 || $meters > 9007199254740991 ||
         !is_string($token) || !preg_match('/\A[a-f0-9]{32}\z/', $token)) {
         respond(400, ['error' => 'Invalid nickname or score.']);

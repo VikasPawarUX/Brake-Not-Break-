@@ -123,6 +123,15 @@ function applyTheme(theme) {
   themeToggle.title = label;
 }
 
+const PLAYER_NAME_LIMIT = 15;
+const playerNameSegmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter() : null;
+
+function playerNameCharacters(name) {
+  return playerNameSegmenter
+    ? Array.from(playerNameSegmenter.segment(name), entry => entry.segment)
+    : Array.from(name);
+}
+
 function createGuestNickname() {
   const [digits] = crypto.getRandomValues(new Uint32Array(1));
   const name = `Guest ${String(digits).padStart(10, '0')}`;
@@ -132,6 +141,13 @@ function createGuestNickname() {
 
 let state = 'ready';
 let best = Math.max(0, Number(readStorage('brake.best')) || 0);
+const bumperRadio = window.createBumperRadio?.({
+  panel: document.querySelector('.bumper-radio'),
+  liveStations: platform ? [] : window.bumperLiveStations,
+  save: station => writeStorage('brake.radio', station),
+  preference: readStorage('brake.radio'),
+});
+
 let muted = readStorage('brake.muted') === 'true';
 const savedGuest = readStorage('brake.guestName');
 const savedNickname = readStorage('brake.driverName');
@@ -374,6 +390,7 @@ function primeAudio() {
 }
 
 function syncAudioLevel() {
+  bumperRadio?.setAudible(!muted && !document.hidden && windowActive && !platform?.adPlaying);
   if (!audio) return;
   const { context, master } = audio;
   if (platform?.adPlaying) {
@@ -645,6 +662,7 @@ function collide(side) {
     writeStorage('brake.best', String(best));
   }
   updateScore();
+  bumperRadio?.duck();
   sound('impact');
   setState('impact');
   triggerHaptic('heavy');
@@ -991,7 +1009,7 @@ function sceneryLift() {
   return baseLift + landscapeLift;
 }
 
-function scoreBaseline(fontSize) {
+function originalScoreBaseline(fontSize) {
   if (width <= 560) return height * 0.29 + fontSize * 0.10 - sceneryLift();
   return height * mountainRanges[0].heightRatio
     - clamp(height * 0.20, 42, 160) * 0.90 + fontSize * 0.20 - sceneryLift();
@@ -1004,8 +1022,8 @@ function ridgePointHeight(point, range) {
   if (width <= 560) {
     if (range.color === 'farMountain') {
       const fontSize = scoreFontSize();
-      // Keep a shallow overlap at the bottom of the fixed score.
-      return scoreBaseline(fontSize) - 6 - Math.min(fontSize * 0.30, 32) * wave;
+      // Preserve the existing mobile ridge height independently of the HUD.
+      return originalScoreBaseline(fontSize) - 6 - Math.min(fontSize * 0.30, 32) * wave;
     }
     return height * range.heightRatio - relief * wave - Math.min(height * 0.07, 56) - sceneryLift();
   }
@@ -1060,15 +1078,24 @@ function drawRunScore() {
   const displayed = state === 'running' ? run.scoreRoll.current : score();
   const digits = String(displayed);
   const previous = String(run.scoreRoll.previous).padStart(digits.length);
-  const fontSize = scoreFontSize();
+  const preferredSize = scoreFontSize();
+  const scoreLift = clamp(height * .052, 14, 44);
+  const baseline = Math.max(34, originalScoreBaseline(preferredSize) - scoreLift);
+  const fontSize = Math.min(preferredSize, (baseline - 12) / .86);
   const center = width / 2 - fontSize * 0.13;
-  const baseline = scoreBaseline(fontSize);
   ink.save();
   ink.textAlign = 'center';
   ink.textBaseline = 'alphabetic';
 
   ink.font = `700 ${fontSize}px "Open Sans", sans-serif`;
   ink.fillStyle = palette.score;
+  ink.strokeStyle = activeTheme === 'light' ? '#f4f3ed' : '#111827';
+  ink.lineJoin = 'round';
+  ink.lineWidth = clamp(fontSize * .022, 1.5, 3);
+  const drawDigit = (text, x, y) => {
+    ink.strokeText(text, x, y);
+    ink.fillText(text, x, y);
+  };
   const digitWidth = ink.measureText('0').width;
   const digitStep = digitWidth - fontSize * 0.035;
   const lastDigitX = center + (digits.length - 1) / 2 * digitStep;
@@ -1081,17 +1108,18 @@ function drawRunScore() {
     const x = center + (index - (digits.length - 1) / 2) * digitStep;
     if (slide < 1 && digits[index] !== previous[index]) {
       ink.globalAlpha = (1 - slide) ** 2.5;
-      ink.fillText(previous[index], x, baseline - slide * fontSize * 0.24);
+      drawDigit(previous[index], x, baseline - slide * fontSize * 0.24);
       ink.globalAlpha = slide;
-      ink.fillText(digits[index], x, baseline + (1 - slide) * fontSize * 0.52);
+      drawDigit(digits[index], x, baseline + (1 - slide) * fontSize * 0.52);
       ink.globalAlpha = 1;
     } else {
-      ink.fillText(digits[index], x, baseline);
+      drawDigit(digits[index], x, baseline);
     }
   }
   const unitSize = Math.max(10, fontSize * 0.24);
   ink.font = `700 ${unitSize}px "Open Sans", sans-serif`;
-  ink.fillText('m', lastDigitX + digitWidth / 2 + ink.measureText('m').width / 2, baseline);
+  ink.lineWidth *= .55;
+  drawDigit('m', lastDigitX + digitWidth / 2 + ink.measureText('m').width / 2, baseline);
   ink.restore();
 }
 
@@ -1246,7 +1274,7 @@ function drawThreeTraffic(front, player, rear, frontColor, playerColor, rearColo
 async function initializeThreeScene() {
   if (platform || new URLSearchParams(location.search).get('renderer') === '2d') return;
   try {
-    const { createThreeScene } = await import('./scene-3d.mjs?v=milestone-depth');
+    const { createThreeScene } = await import('./scene-3d.mjs?v=day-warning');
     threeScene = createThreeScene(game, {
       angle: ANGLE, carScale: CAR_SCALE, halfLength: BODY_HALF_LENGTH,
       wheelRadius: WHEEL_RADIUS, wheelOffsets: WHEEL_OFFSETS, roadHeight,
@@ -1351,11 +1379,11 @@ function render() {
   const { front, player, rear } = run;
   const night = threeScene && activeTheme === 'dark';
   drawSky(night);
-  drawRunScore();
   for (const range of night ? nightMountainRanges : mountainRanges) drawMountainRange(player.position, range);
   const roadY = height * 0.51 + Math.min(height * 0.025, 20);
   drawRoadForeground(player.position, roadY, night);
   drawRain();
+  drawRunScore();
 
   const gap = gaps();
   const frontDanger = dangerLevel(gap.front, player.speed - front.speed, run.nearMiss.front.glow);
@@ -1454,6 +1482,15 @@ function updateMute() {
   mute.setAttribute('aria-pressed', String(muted));
 }
 
+function unlockRadio(event) {
+  if (!bumperRadio || !event.isTrusted || muted || game.inert) return;
+  primeAudio();
+  bumperRadio.unlock(audio);
+}
+
+game.addEventListener('click', unlockRadio, { capture: true });
+game.addEventListener('keydown', unlockRadio, { capture: true });
+
 game.addEventListener('pointerdown', event => {
   if (state !== 'running' || event.button !== 0 || event.target.closest('button')) return;
   event.preventDefault();
@@ -1543,9 +1580,13 @@ window.addEventListener('focus', () => {
 window.addEventListener('pagehide', () => {
   if (platform) windowActive = false;
   interruptFrame();
+  bumperRadio?.setAudible(false);
 });
 window.addEventListener('pageshow', () => {
-  if (!platform) return;
+  if (!platform) {
+    syncAudioLevel();
+    return;
+  }
   windowActive = document.hasFocus();
   interruptFrame();
 });
@@ -1564,6 +1605,7 @@ game.addEventListener('click', event => {
 }, { capture: true });
 function openDriverDialog(setup = false) {
   driverName.value = setup ? '' : driverNickname;
+  driverName.setCustomValidity('');
   cancelDriver.textContent = setup ? 'Skip' : 'Cancel';
   const focusTarget = setup ? cancelDriver : driverName;
   focusTarget.setAttribute('autofocus', '');
@@ -1576,10 +1618,15 @@ editDriver.addEventListener('click', () => {
   if (!menu.inert) openDriverDialog();
 });
 cancelDriver.addEventListener('click', () => driverDialog.close());
+driverName.addEventListener('input', () => driverName.setCustomValidity(''));
 driverForm.addEventListener('submit', event => {
   event.preventDefault();
   const name = driverName.value.trim() || guestNickname;
-  if (name.length > driverName.maxLength && name !== guestNickname && name !== driverNickname) return;
+  if (name !== guestNickname && name !== driverNickname && playerNameCharacters(name).length > PLAYER_NAME_LIMIT) {
+    driverName.setCustomValidity(`Use up to ${PLAYER_NAME_LIMIT} characters.`);
+    driverName.reportValidity();
+    return;
+  }
   if (name !== driverNickname) {
     driverNickname = name;
     writeStorage('brake.driverName', name);
@@ -1622,20 +1669,23 @@ play.addEventListener('click', async () => {
       return;
     }
   }
-  if (state !== 'over' || reducedMotion?.matches || !menu.animate) {
+  if (reducedMotion?.matches || !menu.animate) {
     start();
     return;
   }
 
   primeAudio();
   menu.inert = true;
-  const nextRun = freshRun();
-  run = nextRun;
-  render();
-  const opacity = getComputedStyle(menu).opacity;
-  const exit = menu.animate([{ opacity }, { opacity: 0 }], {
-    duration: 230,
-    easing: 'ease-in-out',
+  const transform = getComputedStyle(menu).transform;
+  const sceneLayers = state === 'over'
+    ? [...game.querySelectorAll('#road, .three-scene, .foreground-overlay, .crash-overlay')]
+    : [];
+  const sceneExits = sceneLayers.map(layer => layer.animate([
+    { opacity: 1 }, { opacity: 1, offset: .42 }, { opacity: 0 },
+  ], { duration: 260, easing: 'ease-in', fill: 'forwards' }));
+  const exit = menu.animate([{ transform }, { transform: 'translateY(100%)' }], {
+    duration: 260,
+    easing: 'cubic-bezier(.6, 0, .84, 0)',
     fill: 'forwards',
   });
   try {
@@ -1643,7 +1693,14 @@ play.addEventListener('click', async () => {
   } catch {
     // The next run can still start if the animation is interrupted.
   } finally {
-    start(nextRun);
+    start();
+    if (sceneLayers.length) {
+      render();
+      for (const animation of sceneExits) animation.cancel();
+      for (const layer of sceneLayers) {
+        layer.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+      }
+    }
     exit.cancel();
     menu.inert = false;
   }
@@ -1654,7 +1711,10 @@ mute.addEventListener('click', () => {
   updateMute();
   writeStorage('brake.muted', String(muted));
   if (muted) syncAudioLevel();
-  else playButtonSound();
+  else {
+    playButtonSound();
+    bumperRadio?.unlock(audio);
+  }
   updateDrivingAudio();
   mute.blur();
 });
@@ -1690,6 +1750,7 @@ async function finishLoading() {
     await fade.finished.catch(() => {});
   }
   launchScreen.hidden = true;
+  game.dataset.loaded = '';
   game.inert = false;
   platform?.loadingFinished();
   if (!platform && firstVisit) openDriverDialog(true);

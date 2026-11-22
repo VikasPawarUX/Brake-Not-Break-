@@ -1,5 +1,12 @@
+const nameSegmenter = new Intl.Segmenter();
+
+function validPlayerName(name) {
+  return Boolean(name) && !/\p{Cc}/u.test(name) &&
+    (/^Guest \d{10}$/.test(name) || Array.from(nameSegmenter.segment(name)).length <= 15);
+}
+
 const rankOrder = 'meters DESC, reached_at ASC, driver_id ASC';
-const topScores = `SELECT name, meters FROM daily_leaderboard WHERE day = ? ORDER BY ${rankOrder} LIMIT 10`;
+const topScores = `SELECT name, meters, country FROM daily_leaderboard WHERE day = ? ORDER BY ${rankOrder} LIMIT 10`;
 const dailyCalendar = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
 });
@@ -56,22 +63,27 @@ async function leaderboard(request, database) {
   const name = typeof data?.name === 'string' ? data.name.trim() : '';
   const meters = data?.meters;
   const token = data?.token;
-  if (!/^[^\p{Cc}]{1,24}$/u.test(name) || !Number.isSafeInteger(meters) || meters < 0 ||
+  if (!validPlayerName(name) || !Number.isSafeInteger(meters) || meters < 0 ||
       typeof token !== 'string' || !/^[a-f0-9]{32}$/.test(token)) {
     return json({ error: 'Invalid nickname or score.' }, 400);
   }
+
+  const edgeCountry = request.cf?.country;
+  const country = /^[A-Z]{2}$/.test(edgeCountry ?? '') && edgeCountry !== 'XX' ? edgeCountry : null;
 
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   const driverId = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   const [, { results: scores }, { results: [standing] }] = await database.batch([
     database.prepare(`
-      INSERT INTO daily_leaderboard (day, driver_id, name, meters, reached_at) VALUES (?, ?, ?, ?, ?)
+      INSERT INTO daily_leaderboard (day, driver_id, name, meters, reached_at, country) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT (day, driver_id) DO UPDATE SET
         name = excluded.name,
+        country = CASE WHEN daily_leaderboard.country IS NULL OR excluded.meters > daily_leaderboard.meters
+          THEN COALESCE(excluded.country, daily_leaderboard.country) ELSE daily_leaderboard.country END,
         meters = MAX(daily_leaderboard.meters, excluded.meters),
         reached_at = CASE WHEN excluded.meters > daily_leaderboard.meters
           THEN excluded.reached_at ELSE daily_leaderboard.reached_at END
-    `).bind(day, driverId, name, meters, timestamp),
+    `).bind(day, driverId, name, meters, timestamp, country),
     database.prepare(topScores).bind(day),
     database.prepare(`
       SELECT COUNT(*) + 1 AS rank

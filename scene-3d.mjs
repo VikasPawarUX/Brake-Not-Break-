@@ -321,10 +321,17 @@ export function createThreeScene(host, { angle, carScale, halfLength, wheelRadiu
         model.bumperMaterial.color.set(view.light ? 0x818994 : 0x242c38);
         const warning = isPlayer ? playerWarning : view.warnings[i];
         if (warning > .001) {
-          model.warningColor.set(view.colors[i]);
-          const tint = warning * (isPlayer ? .48 : .24);
-          model.paint.color.lerp(model.warningColor, tint);
-          model.sidePaint.color.lerp(model.warningColor, tint);
+          if (view.light) {
+            // The pale base otherwise washes out small linear-space blends.
+            const tint = warning * (isPlayer ? .90 : .86);
+            model.paint.color.lerp(model.warningColor.set(0xc92135), tint);
+            model.sidePaint.color.lerp(model.warningColor.set(0xe04350), tint);
+          } else {
+            model.warningColor.set(view.colors[i]);
+            const tint = warning * (isPlayer ? .48 : .24);
+            model.paint.color.lerp(model.warningColor, tint);
+            model.sidePaint.color.lerp(model.warningColor, tint);
+          }
         }
         const slowing = model.speed !== null && car.speed < model.speed - .04;
         model.braking = slowing ? 1 : model.braking * .84;

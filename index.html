@@ -5,18 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>Bumper to Bumper</title>
-  <link rel="icon" type="image/jpeg" sizes="512x512" href="assets/icon/gameicon.jpg?v=assets-2">
-  <link rel="stylesheet" href="style.css?v=rear-honk">
+  <link rel="icon" type="image/x-icon" href="assets/icon/game-favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon/game-favicon.png">
+  <script>
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('brake.theme') === 'light' ? 'light' : 'dark';
+    } catch {}
+  </script>
+  <link rel="stylesheet" href="style.css?v=larger-touch-ring">
   <script src="leaderboard-config.js" defer></script>
-  <script src="leaderboard.js?v=green-overtakes" defer></script>
-  <script src="game.js?v=rear-honk" defer></script>
+  <script src="leaderboard.js?v=compact-flags" defer></script>
+  <script src="radio.js?v=quieter-mix" defer></script>
+  <script src="game.js?v=restart-crossfade" defer></script>
 </head>
 <body>
   <div id="launch-screen" role="status" aria-label="Loading">
     <div class="launch-content">
-      <img src="assets/icon/splash.png?v=assets-2" alt="" width="632" height="196">
+      <img class="launch-logo" src="assets/icon/gameicon.jpg?v=assets-2" alt="" width="512" height="512">
       <div class="launch-progress" aria-hidden="true"></div>
     </div>
+    <p class="launch-copyright">© 2026 Vikas Pawar</p>
   </div>
   <main id="game" inert aria-label="Bumper to Bumper Downhill braking game" data-state="ready">
     <canvas id="road" aria-hidden="true"></canvas>
@@ -45,6 +53,16 @@
             <span id="play-label">Start</span>
           </button>
         </div>
+        <section class="bumper-radio" aria-label="Bumper FM Roadwave">
+          <div class="radio-controls">
+            <button class="radio-prev" type="button" aria-label="Previous radio station"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"/></svg></button>
+            <output class="radio-station" aria-live="polite" aria-atomic="true">
+              <span class="radio-title">OFF</span>
+              <span class="radio-subtitle">Radio Off</span>
+            </output>
+            <button class="radio-next" type="button" aria-label="Next radio station"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg></button>
+          </div>
+        </section>
       </section>
       <section id="leaderboard" aria-labelledby="leaderboard-title" hidden>
         <h2 id="leaderboard-title">Today’s Top 10 Drivers</h2>
@@ -60,7 +78,7 @@
       <form id="driver-form" method="dialog">
         <h2 id="driver-dialog-title"><label for="driver-name">Driver name</label></h2>
         <input id="driver-name" name="driverName" type="text" placeholder="Public nickname"
-          maxlength="10" autocomplete="nickname" enterkeyhint="done" spellcheck="false"
+          autocomplete="nickname" enterkeyhint="done" spellcheck="false"
           aria-describedby="driver-name-description">
         <p id="driver-name-description">Change your name here. This is the name everyone will see on the leaderboards.</p>
         <div class="dialog-actions">

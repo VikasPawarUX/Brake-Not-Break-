@@ -9,6 +9,13 @@ initializeApp();
 
 const db = getFirestore();
 const leaderboard = db.doc('leaderboards/bumper-to-bumper');
+const nameSegmenter = new Intl.Segmenter();
+
+function validPlayerName(name) {
+  return Boolean(name) && !/\p{Cc}/u.test(name) &&
+    (/^Guest \d{10}$/.test(name) || Array.from(nameSegmenter.segment(name)).length <= 15);
+}
+
 const topLimit = 10;
 
 exports.bumperLeaderboard = onCall({ maxInstances: 3 }, async request => {
@@ -22,7 +29,7 @@ exports.bumperLeaderboard = onCall({ maxInstances: 3 }, async request => {
   } else {
     const name = typeof data.name === 'string' ? data.name.trim() : '';
     const { meters, token } = data;
-    if (!name || name.length > 24 || /[\u0000-\u001f\u007f]/.test(name) ||
+    if (!validPlayerName(name) ||
         !Number.isSafeInteger(meters) || meters < 0 ||
         typeof token !== 'string' || !/^[a-f0-9]{32}$/.test(token)) {
       throw new HttpsError('invalid-argument', 'Invalid driver name, score, or browser identifier.');

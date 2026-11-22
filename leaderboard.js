@@ -8,6 +8,7 @@ const leaderboardScores = document.querySelector('#leaderboard-scores');
 const leaderboardStrip = document.querySelector('.leaderboard-strip');
 const scoresPrev = document.querySelector('#scores-prev');
 const scoresNext = document.querySelector('#scores-next');
+const countryNames = typeof Intl.DisplayNames === 'function' ? new Intl.DisplayNames(['en'], { type: 'region' }) : null;
 const leaderboardCalendar = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York' });
 let displayedLeaderboardDay;
 let leaderboardRequest = 0;
@@ -21,9 +22,9 @@ let leaderboardToken;
 let submissions = Promise.resolve();
 
 const sampleScores = [
-  { name: 'Milo Drift', meters: 842 },
-  { name: 'Luna Lane', meters: 716 },
-  { name: 'Theo Turn', meters: 604 },
+  { name: 'Milo Drift', meters: 842, country: 'SG' },
+  { name: 'Luna Lane', meters: 716, country: 'US' },
+  { name: 'Theo Turn', meters: 604, country: 'GB' },
   { name: 'Nova Road', meters: 553 },
   { name: 'Ivy Gear', meters: 477 },
   { name: 'Finn Coast', meters: 429 },
@@ -47,17 +48,28 @@ function getTopDrivers() {
 
 function renderScores(scores) {
   topDriversDay = displayedLeaderboardDay;
-  topDrivers = scores.slice(0, 10).map(entry => {
-    const guestId = /^Guest (\d{3,})$/i.exec(entry.name);
-    return { name: guestId ? `Guest …${guestId[1].slice(-3)}` : entry.name, meters: entry.meters };
-  });
+  topDrivers = scores.slice(0, 10);
   leaderboardScores.replaceChildren();
   for (const [index, entry] of topDrivers.entries()) {
     const row = document.createElement('li');
     const driver = document.createElement('span');
+    const rank = document.createElement('span');
+    const name = document.createElement('span');
     const score = document.createElement('strong');
     driver.className = 'leaderboard-driver';
-    driver.textContent = `${String(index + 1).padStart(2, '0')}.${entry.name}`;
+    rank.textContent = String(index + 1).padStart(2, '0') + '.';
+    driver.append(rank);
+    if (/^[A-Z]{2}$/.test(entry.country ?? '') && entry.country !== 'XX') {
+      const flag = document.createElement('span');
+      flag.className = 'leaderboard-flag';
+      flag.textContent = String.fromCodePoint(...Array.from(entry.country, letter => letter.charCodeAt(0) + 0x1f1a5));
+      flag.setAttribute('role', 'img');
+      flag.setAttribute('aria-label', countryNames?.of(entry.country) || entry.country);
+      driver.append(flag);
+    }
+    name.className = 'leaderboard-name';
+    name.textContent = playerNameCharacters(entry.name).slice(0, 6).join('');
+    driver.append(name);
     score.textContent = `${entry.meters}m`;
     row.append(score, driver);
     leaderboardScores.append(row);
