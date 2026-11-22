@@ -5,37 +5,47 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>Bumper to Bumper</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/jpeg" sizes="512x512" href="assets/icon/gameicon.jpg?v=assets-2">
+  <link rel="stylesheet" href="style.css?v=warm-text">
   <script src="leaderboard-config.js" defer></script>
-  <script src="leaderboard.js" defer></script>
-  <script src="game.js" defer></script>
+  <script src="leaderboard.js?v=green-overtakes" defer></script>
+  <script src="game.js?v=warm-text" defer></script>
 </head>
 <body>
-  <main id="game" aria-label="Bumper to Bumper Downhill braking game" data-state="ready">
+  <div id="launch-screen" role="status" aria-label="Loading">
+    <div class="launch-content">
+      <img src="assets/icon/splash.png?v=assets-2" alt="" width="632" height="196">
+      <div class="launch-progress" aria-hidden="true"></div>
+    </div>
+  </div>
+  <main id="game" inert aria-label="Bumper to Bumper Downhill braking game" data-state="ready">
     <canvas id="road" aria-hidden="true"></canvas>
     <output id="distance" class="live-distance" aria-label="Current distance" aria-live="off">0m</output>
     <div class="menu">
       <section class="control-panel" aria-label="Game controls">
-        <p id="crash-label" class="crash-label" hidden>Crashed!</p>
+        <p id="panel-status" class="panel-status">Ready for the ride?</p>
         <dl class="panel-stats">
           <div class="panel-best"><dt>Best Score</dt><dd id="panel-best">0m</dd></div>
-          <div id="rank-stat" hidden><dt>Rank</dt><dd id="player-rank"></dd></div>
+          <div id="rank-stat" hidden><dt>Rank:</dt><dd id="player-rank"></dd></div>
         </dl>
         <div class="panel-actions">
-          <button id="mute" class="icon-button" type="button" aria-label="Mute sound" aria-pressed="false">
-            <img id="sound-icon" src="assets/icon/sound%20on.svg" alt="" width="24" height="24">
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to Light theme" title="Switch to Light theme">
+            <img id="theme-icon" src="assets/icon/light.svg" alt="" width="24" height="24">
           </button>
           <button id="edit-driver" class="icon-button" type="button" aria-label="Edit driver name" aria-haspopup="dialog">
-            <img src="assets/icon/driver.svg?v=2" alt="" width="24" height="24">
+            <img src="assets/icon/driver.svg?v=assets-2" alt="" width="24" height="24">
+          </button>
+          <button id="mute" class="icon-button" type="button" aria-label="Mute sound" aria-pressed="false">
+            <img id="sound-icon" src="assets/icon/sound%20on.svg?v=assets-2" alt="" width="24" height="24">
           </button>
           <button class="primary" id="play" type="button" aria-keyshortcuts="Enter">
-            <img id="play-icon" src="assets/icon/start.svg" alt="" width="22" height="22">
+            <img id="play-icon" src="assets/icon/start.svg?v=assets-2" alt="" width="22" height="22">
             <span id="play-label">Start</span>
           </button>
         </div>
       </section>
-      <section id="leaderboard" aria-labelledby="leaderboard-title">
-        <h2 id="leaderboard-title">Top 10 drivers</h2>
+      <section id="leaderboard" aria-labelledby="leaderboard-title" hidden>
+        <h2 id="leaderboard-title">Today’s Top 10 Drivers</h2>
         <p id="leaderboard-status" role="status"></p>
         <div class="leaderboard-strip" hidden>
           <button id="scores-prev" class="icon-button" type="button" aria-label="Scroll leaderboard left" aria-controls="leaderboard-scores">‹</button>
@@ -48,8 +58,8 @@
       <form id="driver-form" method="dialog">
         <h2 id="driver-dialog-title"><label for="driver-name">Driver name</label></h2>
         <input id="driver-name" name="driverName" type="text" placeholder="Public nickname"
-          maxlength="24" autocomplete="nickname" enterkeyhint="done" spellcheck="false"
-          aria-describedby="driver-name-description" autofocus>
+          maxlength="10" autocomplete="nickname" enterkeyhint="done" spellcheck="false"
+          aria-describedby="driver-name-description">
         <p id="driver-name-description">Change your name here. This is the name everyone will see on the leaderboards.</p>
         <div class="dialog-actions">
           <button type="button" id="cancel-driver">Cancel</button>
@@ -58,8 +68,8 @@
       </form>
     </dialog>
     <div id="hint" aria-hidden="true" hidden>
-      <span class="hint-hold">[HOLD]</span>
-      <span class="hint-release">[RELEASE]</span>
+      <span class="hint-hold">〈 Hold 〉</span>
+      <span class="hint-release">〈 Release 〉</span>
     </div>
   </main>
 </body>

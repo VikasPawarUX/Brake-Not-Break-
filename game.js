@@ -1,6 +1,9 @@
 'use strict';
 
 const game = document.querySelector('#game');
+const launchScreen = document.querySelector('#launch-screen');
+const platform = window.bumperPlatform;
+const pauseGame = document.querySelector('#pause-game');
 const canvas = document.querySelector('#road');
 const ink = canvas.getContext('2d');
 const play = document.querySelector('#play');
@@ -11,13 +14,16 @@ const editDriver = document.querySelector('#edit-driver');
 const driverDialog = document.querySelector('#driver-dialog');
 const driverForm = document.querySelector('#driver-form');
 const cancelDriver = document.querySelector('#cancel-driver');
-const crashLabel = document.querySelector('#crash-label');
+const panelStatus = document.querySelector('#panel-status');
 const panelBest = document.querySelector('#panel-best');
 const menu = document.querySelector('.menu');
 const hint = document.querySelector('#hint');
 const distance = document.querySelector('#distance');
 const mute = document.querySelector('#mute');
 const soundIcon = document.querySelector('#sound-icon');
+const themeToggle = document.querySelector('#theme-toggle');
+const themeIcon = document.querySelector('#theme-icon');
+const themeColor = document.querySelector('meta[name="theme-color"]');
 
 const ANGLE = Math.PI / 12;
 const CAR_SCALE = 1.25;
@@ -33,7 +39,7 @@ const LAUNCH_DURATION = 0.75;
 const METERS_PER_UNIT = 0.12;
 const SCORE_STEP_METERS = 5;
 const SCORE_ROLL_DURATION = 0.15;
-const MILESTONE_METERS = 20;
+const MILESTONE_METERS = 50;
 const MILESTONE_INTERVAL = MILESTONE_METERS / METERS_PER_UNIT;
 const STAMP_DURATION = 0.56;
 const IMPACT_DURATION = 0.42;
@@ -62,15 +68,15 @@ const settings = Object.freeze({
   progression: 1,
 });
 const palette = {
-  background: '#000000', score: '#ffffff',
+  background: '#000000', score: '#FFF8E4', playerOutline: '#FFF8E4',
   nearMountain: '#17171b', farMountain: '#2b2b30',
   road: '#727272', stone: '#444444', brightStone: '#5c5c5c',
-  milestonePost: '#707070', milestoneText: '#939393',
-  check: '#a0a0a0', stamp: '#d8d8d8',
+  milestonePost: '#707070', milestoneText: '#AAA592',
+  check: '#B7B19E', stamp: '#E2DCC9',
   outerCar: '#777777', traffic: [145, 145, 145], danger: [255, 73, 73],
-  warning: '#ff4949', brakeLight: '#ff4e4e',
+  warning: '#ff4949',
 };
-const pointers = new Set();
+const pointers = new Map();
 
 function readStorage(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -78,6 +84,36 @@ function readStorage(key) {
 
 function writeStorage(key, value) {
   try { localStorage.setItem(key, value); } catch { /* Keep the session usable. */ }
+}
+
+const defaultPalette = { ...palette };
+
+function rgbChannels(hex) {
+  return [1, 3, 5].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16));
+}
+
+const lightPalette = {
+  background: '#ebebeb', score: '#111111', playerOutline: '#111111',
+  nearMountain: '#d7d7d7', farMountain: '#c6c6c6',
+  road: '#818181', stone: '#b5b5b5', brightStone: '#a0a0a0',
+  milestonePost: '#717171', milestoneText: '#4d4d4d',
+  check: '#4d4d4d', stamp: '#111111',
+  outerCar: '#777777', traffic: [91, 91, 91], danger: [142, 21, 51],
+  warning: '#8e1533',
+};
+
+let activeTheme = 'dark';
+
+function applyTheme(theme) {
+  const light = theme === 'light';
+  activeTheme = light ? 'light' : 'dark';
+  document.documentElement.dataset.theme = activeTheme;
+  Object.assign(palette, light ? lightPalette : defaultPalette);
+  themeColor.content = palette.background;
+  themeIcon.src = light ? 'assets/icon/dark.svg' : 'assets/icon/light.svg';
+  const label = light ? 'Switch to Dark theme' : 'Switch to Light theme';
+  themeToggle.setAttribute('aria-label', label);
+  themeToggle.title = label;
 }
 
 function createGuestNickname() {
@@ -90,8 +126,12 @@ function createGuestNickname() {
 let state = 'ready';
 let best = Math.max(0, Number(readStorage('brake.best')) || 0);
 let muted = readStorage('brake.muted') === 'true';
-const guestNickname = readStorage('brake.guestName') || createGuestNickname();
-let driverNickname = readStorage('brake.driverName')?.trim() || guestNickname;
+const savedGuest = readStorage('brake.guestName');
+const savedNickname = readStorage('brake.driverName');
+const firstVisit = savedGuest === null && savedNickname === null &&
+  readStorage('brake.best') === null && readStorage('brake.muted') === null;
+const guestNickname = savedGuest || createGuestNickname();
+let driverNickname = savedNickname?.trim() || guestNickname;
 const brakeKeys = new Set(['Space', 'ArrowDown']);
 const heldBrakeKeys = new Set();
 let audio;
@@ -139,7 +179,6 @@ function createCar(position, profile) {
     speed: settings.baseSpeed,
     bodyHeight: (rearHeight + frontHeight) / 2,
     bodyVelocity: 0,
-    brakeLight: 0,
   };
 }
 
@@ -152,17 +191,70 @@ function shuffleProfiles() {
   return profiles;
 }
 
+const introductoryGapStages = [
+  [0, 1], [50, 1], [100, 0.95], [150, 0.90], [200, 0.80],
+  [250, 0.70], [350, 0.60], [450, 0.45], [600, 0.30], [800, 0.15],
+];
+
+const trafficGapVariationStages = [
+  [0, 0.05], [100, 0.05], [150, 0.08], [200, 0.08], [250, 0.10],
+  [350, 0.10], [450, 0.12], [600, 0.15], [800, 0.15], [900, 0.20],
+];
+
+function easeProgress(progress) {
+  return progress ** 2 * (3 - 2 * progress);
+}
+
+function distanceStageValue(stages, meters) {
+  const stage = stages.findIndex(([end]) => meters <= end);
+  if (stage <= 0) return (stage === 0 ? stages[0] : stages.at(-1))[1];
+  const [start, low] = stages[stage - 1];
+  const [end, high] = stages[stage];
+  return low + (high - low) * easeProgress((meters - start) / (end - start));
+}
+
+function introductoryGapBonus(meters) {
+  return distanceStageValue(introductoryGapStages, meters);
+}
+
+function trafficGapVariationLimit(meters) {
+  return distanceStageValue(trafficGapVariationStages, meters);
+}
+
+function createGapVariation(value = Math.random(), startedAt = 0) {
+  return { from: value, to: Math.random(), startedAt, duration: 2 + Math.random() * 3 };
+}
+
+function sampleGapVariation(variation, time) {
+  if (time >= variation.startedAt + variation.duration) {
+    Object.assign(variation, createGapVariation(variation.to, time));
+  }
+  const progress = (time - variation.startedAt) / variation.duration;
+  return variation.from + (variation.to - variation.from) * progress ** 2 * (3 - 2 * progress);
+}
+
 function freshRun() {
   const profiles = shuffleProfiles();
+  const gapMultiplier = 1 + introductoryGapBonus(0);
+  const frontVariation = createGapVariation();
+  const rearVariation = createGapVariation();
+  const variationLimit = trafficGapVariationLimit(0);
+  const frontGap = settings.frontGap * (gapMultiplier + variationLimit * frontVariation.from);
+  const rearGap = settings.rearGap * (gapMultiplier + variationLimit * rearVariation.from);
   return {
-    lead: createCar(settings.frontGap + 4 * HALF_LENGTH + OUTER_GAP, profiles[0]),
-    front: createCar(settings.frontGap + 2 * HALF_LENGTH, profiles[1]),
+    lead: createCar(frontGap + 4 * HALF_LENGTH + OUTER_GAP, profiles[0]),
+    front: createCar(frontGap + 2 * HALF_LENGTH, profiles[1]),
     player: createCar(0, profiles[2]),
-    rear: createCar(-settings.rearGap - 2 * HALF_LENGTH, profiles[3]),
-    tail: createCar(-settings.rearGap - 4 * HALF_LENGTH - OUTER_GAP, profiles[4]),
+    rear: createCar(-rearGap - 2 * HALF_LENGTH, profiles[3]),
+    tail: createCar(-rearGap - 4 * HALF_LENGTH - OUTER_GAP, profiles[4]),
     time: 0,
+    rainStart: 3 + Math.random() * 12,
+    rainDuration: 5 + Math.random() * 4,
     launchTime: 0,
     trafficPhase: 0,
+    recoveryPhase: Math.random() * TURN,
+    frontVariation,
+    rearVariation,
     releaseTime: 1,
     hasBraked: false,
     braking: false,
@@ -173,7 +265,11 @@ function freshRun() {
       rear: { armed: false, glow: 0 },
     },
     lastNearMiss: -Infinity,
+    rearHornEncounter: false,
+    lastRearHorn: -Infinity,
     milestoneStamp: null,
+    overtakeMarkers: [],
+    replacedMilestones: new Set(),
     scoreRoll: { current: 0, previous: 0, startedAt: 0 },
   };
 }
@@ -189,21 +285,41 @@ function updateScore() {
   if (panelBest.textContent !== record) panelBest.textContent = record;
 }
 
+const startMessages = [
+  'Ready for the ride?',
+  'Keep your distance!',
+  'Brake smart. Drive far.',
+  'Stay sharp. Stay alive.',
+  'How far can you go?',
+];
+
+const gameOverMessages = [
+  'Oops! Too close.',
+  'Well, that escalated quickly.',
+  'One more try?',
+  'So close. So far.',
+  'The traffic wins this round.',
+];
+
+function pickStatusMessage(messages) {
+  return messages[Math.floor(Math.random() * messages.length)];
+}
+
 function setState(next) {
   state = next;
   game.dataset.state = next;
   menu.hidden = next === 'running' || next === 'impact';
-  crashLabel.hidden = next !== 'over';
-  if (next === 'running') {
-    brakeHintComplete = false;
-    hint.classList.remove('is-held', 'is-complete');
-  }
+  if (next === 'over') panelStatus.textContent = pickStatusMessage(gameOverMessages);
+  if (next === 'paused') panelStatus.textContent = 'Paused';
+  if (pauseGame) pauseGame.hidden = next !== 'running';
   hint.hidden = next !== 'running';
   updateDrivingAudio();
+  syncPlatformGameplay();
 }
 
-const musicPhrase = [57, 69, 72, null, 53, 69, 72, null, 60, 67, 76, null, 55, 67, 74, null];
-const musicBeat = 0.48;
+function syncPlatformGameplay() {
+  platform?.setPlaying(state === 'running' && !document.hidden && windowActive);
+}
 
 function primeAudio() {
   if (muted) return;
@@ -213,18 +329,18 @@ function primeAudio() {
     if (!audio) {
       const context = new Audio();
       const master = context.createGain();
-      const musicLevel = context.createGain();
       const engine = context.createOscillator();
       const engineFilter = context.createBiquadFilter();
       const engineLevel = context.createGain();
+      const rainLevel = context.createGain();
+      const rainFilter = context.createBiquadFilter();
+      const rainNoise = context.createBufferSource();
       const noise = context.createBuffer(1, Math.ceil(context.sampleRate * 0.65), context.sampleRate);
       const samples = noise.getChannelData(0);
       for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
 
       master.gain.value = 0;
       master.connect(context.destination);
-      musicLevel.gain.value = 1;
-      musicLevel.connect(master);
       engine.type = 'sawtooth';
       engine.frequency.value = 38;
       engineFilter.type = 'lowpass';
@@ -232,26 +348,44 @@ function primeAudio() {
       engineLevel.gain.value = 0;
       engine.connect(engineFilter).connect(engineLevel).connect(master);
       engine.start();
-      audio = { context, master, musicLevel, engine, engineFilter, engineLevel, noise, nextBeat: 0, beat: 0 };
+      rainNoise.buffer = noise;
+      rainNoise.loop = true;
+      rainFilter.type = 'bandpass';
+      rainFilter.frequency.value = 2100;
+      rainFilter.Q.value = 0.6;
+      rainLevel.gain.value = 0;
+      rainNoise.connect(rainFilter).connect(rainLevel).connect(master);
+      rainNoise.start();
+      audio = { context, master, engine, engineFilter, engineLevel, noise, rainLevel };
     }
     syncAudioLevel();
-    if (audio.context.state !== 'running') return audio.context.resume().catch(() => {});
+    if (audio.context.state !== 'running') {
+      return audio.context.resume().then(() => {
+        syncAudioLevel();
+        updateDrivingAudio();
+      }).catch(() => {});
+    }
   } catch { /* Audio is optional. */ }
 }
 
 function syncAudioLevel() {
   if (!audio) return;
   const { context, master } = audio;
+  if (platform?.adPlaying) {
+    master.gain.cancelScheduledValues(context.currentTime);
+    master.gain.setValueAtTime(0, context.currentTime);
+    return;
+  }
   master.gain.setTargetAtTime(muted || document.hidden || !windowActive ? 0 : 0.65,
     context.currentTime, 0.025);
 }
 
-function playAudioVoice(source, output, start, length, volume, attack = 0.012, destination = audio.master) {
+function playAudioVoice(source, output, start, length, volume, attack = 0.012) {
   const envelope = audio.context.createGain();
   envelope.gain.setValueAtTime(0.0001, start);
   envelope.gain.exponentialRampToValueAtTime(volume, start + attack);
   envelope.gain.exponentialRampToValueAtTime(0.0001, start + length);
-  output.connect(envelope).connect(destination);
+  output.connect(envelope).connect(audio.master);
   source.onended = () => {
     source.disconnect();
     if (output !== source) output.disconnect();
@@ -261,15 +395,15 @@ function playAudioVoice(source, output, start, length, volume, attack = 0.012, d
   source.stop(start + length);
 }
 
-function playTone(type, from, to, start, length, volume, attack, destination) {
+function playTone(type, from, to, start, length, volume, attack) {
   const tone = audio.context.createOscillator();
   tone.type = type;
   tone.frequency.setValueAtTime(from, start);
   tone.frequency.exponentialRampToValueAtTime(to, start + length);
-  playAudioVoice(tone, tone, start, length, volume, attack, destination);
+  playAudioVoice(tone, tone, start, length, volume, attack);
 }
 
-function playNoise(type, from, to, start, length, volume) {
+function playNoise(type, from, to, start, length, volume, attack) {
   const source = audio.context.createBufferSource();
   const filter = audio.context.createBiquadFilter();
   source.buffer = audio.noise;
@@ -277,7 +411,7 @@ function playNoise(type, from, to, start, length, volume) {
   filter.frequency.setValueAtTime(from, start);
   filter.frequency.exponentialRampToValueAtTime(to, start + length);
   source.connect(filter);
-  playAudioVoice(source, filter, start, length, volume);
+  playAudioVoice(source, filter, start, length, volume, attack);
 }
 
 function sound(event) {
@@ -285,12 +419,20 @@ function sound(event) {
   const now = audio.context.currentTime;
   switch (event) {
     case 'brake':
-      playNoise('bandpass', 1800, 600, now, 0.26, 0.095);
+      playNoise('bandpass', 3100, 2300, now, 0.16, 0.037, 0.035);
       break;
     case 'impact':
       playNoise('lowpass', 3200, 170, now, 0.48, 0.31);
       playTone('triangle', 135, 36, now, 0.34, 0.24, 0.006);
       playNoise('bandpass', 1100, 420, now + 0.05, 0.2, 0.11);
+      break;
+    case 'milestone':
+      playTone('sine', 660, 660, now, 0.1, 0.055, 0.008);
+      playTone('sine', 880, 880, now + 0.055, 0.16, 0.045, 0.008);
+      break;
+    case 'horn':
+      playTone('triangle', 435, 425, now, 0.24, 0.095, 0.022);
+      playTone('triangle', 540, 530, now, 0.20, 0.047, 0.027);
       break;
     case 'escape':
       playTone('sine', 690, 510, now, 0.065, 0.032);
@@ -301,6 +443,18 @@ function sound(event) {
   }
 }
 
+function rainIntensity() {
+  if (state !== 'running') return 0;
+  const elapsed = run.time - run.rainStart;
+  return clamp(Math.min(elapsed / 1.2, (run.rainDuration - elapsed) / 1.4), 0, 1);
+}
+
+function updateRain() {
+  if (run.time < run.rainStart + run.rainDuration) return;
+  run.rainStart = run.time + 9 + Math.random() * 16;
+  run.rainDuration = 5 + Math.random() * 4;
+}
+
 function updateDrivingAudio() {
   if (audio?.context.state !== 'running') return;
   const now = audio.context.currentTime;
@@ -309,21 +463,7 @@ function updateDrivingAudio() {
   audio.engine.frequency.setTargetAtTime(35 + speed * 58 + (run.braking ? 0 : 7), now, 0.075);
   audio.engineFilter.frequency.setTargetAtTime(115 + speed * (run.braking ? 85 : 160), now, 0.1);
   audio.engineLevel.gain.setTargetAtTime(driving ? 0.052 + speed * 0.039 : 0, now, 0.09);
-
-  audio.musicLevel.gain.setTargetAtTime(state === 'running' ? 0.8 : 1, now, 0.12);
-  if (muted) return;
-  if (audio.nextBeat < now) audio.nextBeat = now + 0.035;
-  while (audio.nextBeat < now + 0.1) {
-    const note = musicPhrase[audio.beat];
-    if (note !== null) {
-      const bass = audio.beat % 4 === 0;
-      const frequency = 440 * 2 ** ((note - 69) / 12);
-      playTone(bass ? 'sine' : 'triangle', frequency, frequency, audio.nextBeat,
-        bass ? 1.32 : 0.78, bass ? 0.052 : 0.062, bass ? 0.18 : 0.08, audio.musicLevel);
-    }
-    audio.nextBeat += musicBeat;
-    audio.beat = (audio.beat + 1) % musicPhrase.length;
-  }
+  audio.rainLevel.gain.setTargetAtTime(driving ? rainIntensity() * 0.04 : 0, now, 0.22);
 }
 
 function playButtonSound() {
@@ -344,9 +484,17 @@ function triggerHaptic(type) {
   }
 }
 
+function fadeTouchRing(ring) {
+  if (!ring) return;
+  ring.classList.add('is-released');
+  setTimeout(() => ring.remove(), 220);
+}
+
 function clearInput() {
+  for (const ring of pointers.values()) fadeTouchRing(ring);
   pointers.clear();
   heldBrakeKeys.clear();
+  if (!brakeHintComplete) hint.classList.remove('is-held');
   run.braking = false;
 }
 
@@ -354,7 +502,12 @@ function start(nextRun = state === 'ready' ? run : freshRun()) {
   primeAudio();
   run = nextRun;
   run.driverName = driverNickname;
-  hideLeaderboard();
+  if (!platform) {
+    setOvertakeMarkers();
+    hideLeaderboard();
+  }
+  brakeHintComplete = false;
+  hint.classList.remove('is-held', 'is-complete');
   accumulator = 0;
   lastFrame = null;
   clearInput();
@@ -373,40 +526,28 @@ function trafficPulse(phase, shape = 2) {
   return Math.max(0, Math.sin(phase)) ** shape;
 }
 
-function updateBrakeLight(car, previousSpeed, dt) {
-  const deceleration = (previousSpeed - car.speed) / dt;
-  const target = clamp((deceleration - 5) / 22, 0, 1);
-  car.brakeLight = approach(car.brakeLight, target, (target > car.brakeLight ? 16 : 5) * dt);
-}
-
 const pressureStages = [
-  [100, 0],
-  [250, 0.26],
-  [400, 0.55],
-  [600, 1],
+  [0, 0], [150, 0.05], [250, 0.15], [400, 0.35],
+  [600, 0.60], [800, 0.85], [1000, 1],
 ];
 
 function trafficPressure(meters) {
-  if (meters <= pressureStages[0][0]) return 0;
-  for (let stage = 1; stage < pressureStages.length; stage++) {
-    const [end, high] = pressureStages[stage];
-    if (meters <= end) {
-      const [start, low] = pressureStages[stage - 1];
-      const progress = (meters - start) / (end - start);
-      const eased = progress * progress * (3 - 2 * progress);
-      return low + (high - low) * eased;
-    }
-  }
-  return 1;
+  return distanceStageValue(pressureStages, meters);
 }
 
 function updateTraffic(dt) {
   const { lead, front, player, rear, tail, time } = run;
   const difficulty = 1 - Math.exp(-Math.max(0, Math.min(score(), 600) - 22) * settings.progression / 155);
-  const extraPressure = trafficPressure(player.position * METERS_PER_UNIT);
+  const meters = player.position * METERS_PER_UNIT;
+  const extraPressure = trafficPressure(meters);
   const intro = clamp((time - 1.15) / 3.4, 0, 1);
-  const pressure = settings.aggression * intro * (0.82 + 0.30 * difficulty) * (1 + 0.20 * extraPressure);
-  run.trafficPhase += (1.55 + 0.52 * difficulty + 0.43 * extraPressure) * dt;
+  run.trafficPhase += (1.55 + 0.52 * difficulty + 0.43 * extraPressure)
+    * (0.62 + 0.38 * extraPressure) * dt;
+  const recoveryWave = 0.5 + 0.5 * Math.sin(run.trafficPhase * 0.31 + run.recoveryPhase
+    + 0.32 * Math.sin(time * 0.43 + run.recoveryPhase));
+  const intensity = extraPressure * (0.42 + 0.58 * easeProgress(recoveryWave));
+  const pressure = settings.aggression * intro * (0.82 + 0.30 * difficulty)
+    * (1 + 0.20 * extraPressure) * intensity;
 
   // Smooth timing offsets let the pressure waves overlap without speeding up the cars abruptly.
   const frontPhase = run.trafficPhase - 0.75 + extraPressure * 0.24 * Math.sin(time * 0.67);
@@ -420,15 +561,28 @@ function updateTraffic(dt) {
   const rearPulse = trafficPulse(rearPhase, pulseShape) * (0.95 + 0.12 * pairStrength);
   const pace = pressure * 0.21 * Math.sin(run.trafficPhase * 0.43);
   const openSpace = front.position - rear.position - 4 * HALF_LENGTH;
-  const preferredSpace = settings.frontGap + settings.rearGap - 16 * difficulty;
-  const correction = clamp((preferredSpace - openSpace) * 0.19, 0, 8);
+  const gapBonus = introductoryGapBonus(meters);
+  const preferredSpace = (settings.frontGap + settings.rearGap) * (1 + gapBonus) - 16 * difficulty;
+  const variationLimit = trafficGapVariationLimit(meters);
+  const frontExtraGap = settings.frontGap * variationLimit * sampleGapVariation(run.frontVariation, time);
+  const rearExtraGap = settings.rearGap * variationLimit * sampleGapVariation(run.rearVariation, time);
+  // Split the existing spacing correction so the two gap targets can vary independently.
+  const spaceDeficit = preferredSpace - openSpace;
+  const frontCorrection = clamp((spaceDeficit + 2 * frontExtraGap) * 0.19, 0, 8);
+  const rearCorrection = clamp((spaceDeficit + 2 * rearExtraGap) * 0.19, 0, 8);
 
-  let frontTarget = settings.baseSpeed + pace - pressure * frontPulse + correction;
-  let rearTarget = settings.baseSpeed + pace + pressure * rearPulse - correction;
+  // Preserve independent waves, but soften their overlap during the learning stages.
+  const coordination = 0.62 * easeProgress(clamp((meters - 250) / 350, 0, 1))
+    + 0.24 * easeProgress(clamp((meters - 600) / 200, 0, 1));
+  const overlap = Math.min(frontPulse, rearPulse) * (1 - coordination);
+  let frontTarget = settings.baseSpeed + pace - pressure * (frontPulse - overlap) + frontCorrection;
+  let rearTarget = settings.baseSpeed + pace + pressure * (rearPulse - overlap) - rearCorrection;
 
   // Cap the rate at which the traffic can squeeze the player. The cap
   // leaves room for the AI to ease out of a squeeze at its own acceleration.
-  const minimumSpace = 42;
+  const originalMinimumSpace = 42;
+  // Protect the extra room early, then ease toward the smaller late-run buffer.
+  const minimumSpace = originalMinimumSpace + (preferredSpace - originalMinimumSpace) * gapBonus;
   const trafficAcceleration = 34 + 9 * difficulty;
   const room = Math.max(0, openSpace - minimumSpace);
   const closingLimit = Math.min(room * 1.15, Math.sqrt(2 * trafficAcceleration * room));
@@ -442,8 +596,6 @@ function updateTraffic(dt) {
     frontTarget = Math.max(frontTarget, front.speed + trafficAcceleration * dt);
     rearTarget = Math.min(rearTarget, rear.speed - trafficAcceleration * dt);
   }
-  const frontBefore = front.speed;
-  const leadBefore = lead.speed;
   front.speed = approach(front.speed, clamp(frontTarget, 60, 245), trafficAcceleration * dt);
   rear.speed = approach(rear.speed, clamp(rearTarget, 60, 245), trafficAcceleration * dt);
 
@@ -452,8 +604,6 @@ function updateTraffic(dt) {
   const tailGap = OUTER_GAP - 13 * formation * trafficPulse(rearPhase + 1.55);
   followTraffic(lead, front, 1, leadGap);
   followTraffic(tail, rear, -1, tailGap);
-  updateBrakeLight(lead, leadBefore, dt);
-  updateBrakeLight(front, frontBefore, dt);
 
   const playerBefore = player.speed;
 
@@ -523,8 +673,11 @@ function simulate(dt) {
     moveCar(car, travelTime);
   }
   const passedMarker = Math.floor(run.player.position / MILESTONE_INTERVAL);
-  if (passedMarker > previousMarker) {
-    run.milestoneStamp = { marker: passedMarker, age: 0 };
+  let checkmark = false;
+  for (let marker = previousMarker + 1; marker <= passedMarker; marker++) {
+    if (run.replacedMilestones.has(marker)) continue;
+    run.milestoneStamp = { marker, age: 0 };
+    checkmark = true;
   }
   const displayScore = Math.floor(score() / SCORE_STEP_METERS) * SCORE_STEP_METERS;
   if (displayScore !== run.scoreRoll.current) {
@@ -534,11 +687,25 @@ function simulate(dt) {
     collide(frontContact <= rearContact ? 'front' : 'rear');
   } else {
     updateNearMisses(before, dt);
+    const overtookDriver = markOvertakes(score());
+    if (checkmark || overtookDriver) sound('milestone');
   }
+}
+
+function updateRearHorn(gap, previousGap) {
+  const closing = run.rear.speed - run.player.speed;
+  const warningGap = trafficWarningGap(closing) + 6;
+  if (gap > warningGap + 10) run.rearHornEncounter = false;
+  if (run.rearHornEncounter || closing <= 0 || gap >= previousGap || gap > warningGap) return;
+  run.rearHornEncounter = true;
+  if (run.time - run.lastRearHorn < 6 || Math.random() >= 0.65) return;
+  run.lastRearHorn = run.time;
+  sound('horn');
 }
 
 function updateNearMisses(before, dt) {
   const after = gaps();
+  updateRearHorn(after.rear, before.rear);
   for (const side of ['front', 'rear']) {
     const cue = run.nearMiss[side];
     const opening = after[side] - before[side];
@@ -555,6 +722,46 @@ function updateNearMisses(before, dt) {
   }
 }
 
+function setOvertakeMarkers() {
+  run.overtakeMarkers = getTopDrivers()
+    .filter(driver => Number.isSafeInteger(driver.meters) && driver.meters >= 0)
+    .map(driver => ({
+      name: driver.name,
+      meters: driver.meters,
+      position: (driver.meters + 1) / METERS_PER_UNIT,
+      passedAt: null,
+      lane: 0,
+    }))
+    .sort((a, b) => a.position - b.position);
+  run.replacedMilestones = new Set(run.overtakeMarkers.map(marker =>
+    Math.max(1, Math.round(marker.meters / MILESTONE_METERS))));
+  layoutOvertakeMarkers();
+}
+
+function layoutOvertakeMarkers() {
+  const laneEnds = [];
+  for (const marker of run.overtakeMarkers) {
+    const available = laneEnds.findIndex(end => (marker.position - end) * scale >= 118);
+    marker.lane = available === -1 ? laneEnds.length : available;
+    laneEnds[marker.lane] = marker.position;
+  }
+}
+
+function markOvertakes(meters) {
+  let overtookDriver = false;
+  for (const marker of run.overtakeMarkers) {
+    if (marker.meters >= meters) break;
+    if (marker.passedAt !== null) continue;
+    marker.passedAt = run.time;
+    overtookDriver = true;
+  }
+  return overtookDriver;
+}
+
+window.addEventListener('bumper-leaderboard-updated', () => {
+  if (state === 'ready') setOvertakeMarkers();
+});
+
 function resize() {
   width = canvas.clientWidth;
   height = canvas.clientHeight;
@@ -562,6 +769,7 @@ function resize() {
   canvas.width = Math.round(width * pixelRatio);
   canvas.height = Math.round(height * pixelRatio);
   scale = clamp(width / 495, 0.45, 1.45) * CAMERA_ZOOM;
+  layoutOvertakeMarkers();
 }
 
 function drawMilestoneCheck(age) {
@@ -596,6 +804,19 @@ function drawMilestoneCheck(age) {
   ink.stroke();
 }
 
+function drawMilestonePost(label, color, maxWidth) {
+  ink.lineWidth = 1;
+  ink.strokeStyle = palette.milestonePost;
+  ink.strokeRect(-1.5, -9.5, 3, 10);
+  ink.fillStyle = palette.milestoneText;
+  ink.fillRect(-1, -9, 2, 2);
+  ink.fillStyle = color;
+  ink.font = '400 13px "Inter", sans-serif';
+  ink.textAlign = 'center';
+  ink.textBaseline = 'top';
+  ink.fillText(label, 0, 4, maxWidth);
+}
+
 function drawRoad(origin) {
   const start = origin - width / scale - 20;
   const end = origin + width / scale + 20;
@@ -624,6 +845,7 @@ function drawRoad(origin) {
   const stamp = run.milestoneStamp;
   const passedMarker = Math.floor(origin / MILESTONE_INTERVAL);
   for (let marker = first; marker * MILESTONE_INTERVAL <= end; marker++) {
+    if (run.replacedMilestones.has(marker)) continue;
     const position = marker * MILESTONE_INTERVAL;
     ink.save();
     ink.translate(position - origin, roadHeight(position) + 22 / scale);
@@ -632,21 +854,32 @@ function drawRoad(origin) {
     if (marker <= passedMarker) {
       drawMilestoneCheck(stamp?.marker === marker ? stamp.age : Infinity);
     } else {
-      ink.lineWidth = 1;
-      ink.strokeStyle = palette.milestonePost;
-      ink.strokeRect(-1.5, -9.5, 3, 10);
-      ink.fillStyle = palette.milestoneText;
-      ink.fillRect(-1, -9, 2, 2);
-      ink.font = '500 10px "Martian Mono", monospace';
-      ink.textAlign = 'center';
-      ink.textBaseline = 'top';
-      ink.fillText(`${marker * MILESTONE_METERS}m`, 0, 4);
+      drawMilestonePost(`${marker * MILESTONE_METERS}m`, palette.milestoneText, 112);
+    }
+    ink.restore();
+  }
+  drawOvertakeMarkers(origin, start, end);
+}
+
+function drawOvertakeMarkers(origin, start, end) {
+  for (const marker of run.overtakeMarkers) {
+    if (marker.position < start || marker.position > end) continue;
+
+    ink.save();
+    ink.translate(marker.position - origin, roadHeight(marker.position) + (22 + marker.lane * 31) / scale);
+    ink.rotate(-ANGLE);
+    ink.scale(1 / scale, 1 / scale);
+    if (marker.passedAt !== null) {
+      const age = reducedMotion?.matches || run.impact ? Infinity : run.time - marker.passedAt;
+      drawMilestoneCheck(age);
+    } else {
+      drawMilestonePost(marker.name, palette.milestoneText, 112);
     }
     ink.restore();
   }
 }
 
-function drawCar(car, origin, color, light = 0, brakePitch = 0) {
+function drawCar(car, origin, color, brakePitch = 0, warningFill = 0) {
   const wheels = WHEEL_OFFSETS.map(offset => {
     const position = car.position + offset;
     const slope = roadSlope(position);
@@ -669,7 +902,9 @@ function drawCar(car, origin, color, light = 0, brakePitch = 0) {
   ink.lineCap = 'round';
   ink.lineWidth = 1.5 / scale;
   ink.strokeStyle = color;
-  ink.fillStyle = palette.background;
+  ink.fillStyle = warningFill > 0
+    ? dangerColor(warningFill * 0.16, rgbChannels(palette.background))
+    : palette.background;
 
   ink.save();
   ink.translate(0, chassisHeight - 8 * CAR_SCALE);
@@ -683,17 +918,15 @@ function drawCar(car, origin, color, light = 0, brakePitch = 0) {
   ink.closePath();
   ink.fill();
   ink.stroke();
-  // The lamp follows the rear corner of the existing body outline.
-  if (light > 0) {
-    ink.strokeStyle = palette.brakeLight;
-    ink.globalAlpha = light;
-    ink.lineWidth = 2 / (scale * CAR_SCALE);
+  if (car === run.player) {
+    ink.clip();
+    ink.globalAlpha = 0.19;
+    ink.lineWidth = 1;
     ink.beginPath();
-    const [[cornerX, cornerY], [shoulderX, shoulderY]] = car.profile;
-    const shoulderSlope = (shoulderY - cornerY) / (shoulderX - cornerX);
-    ink.moveTo(cornerX, cornerY + 3.5);
-    ink.lineTo(cornerX, cornerY);
-    ink.lineTo(cornerX + 3, cornerY + 3 * shoulderSlope);
+    for (let x = -BODY_HALF_LENGTH - 20; x <= BODY_HALF_LENGTH; x += 2.5) {
+      ink.moveTo(x, 0);
+      ink.lineTo(x + 16, -28);
+    }
     ink.stroke();
   }
   ink.restore();
@@ -711,10 +944,13 @@ function trafficWarningGap(closing) {
   return 9 + Math.max(0, closing) * 0.52;
 }
 
-function dangerColor(gap, closing, glow) {
+function dangerLevel(gap, closing, glow) {
   const threshold = trafficWarningGap(closing);
-  const danger = Math.max(glow * 0.65, clamp((threshold - gap + 12) / 20, 0, 1));
-  const channels = palette.traffic.map((channel, index) =>
+  return Math.max(glow * 0.65, clamp((threshold - gap + 12) / 20, 0, 1));
+}
+
+function dangerColor(danger, base = palette.traffic) {
+  const channels = base.map((channel, index) =>
     Math.round(channel + (palette.danger[index] - channel) * danger));
   return `rgb(${channels.join(', ')})`;
 }
@@ -789,16 +1025,18 @@ function drawRunScore() {
   ink.textAlign = 'center';
   ink.textBaseline = 'alphabetic';
 
-  ink.font = `500 ${fontSize}px "Martian Mono", monospace`;
+  ink.font = `400 ${fontSize}px "Inter", sans-serif`;
   ink.fillStyle = palette.score;
-  const digitWidth = fontSize * 0.62;
+  const digitWidth = ink.measureText('0').width;
+  const digitStep = digitWidth - fontSize * 0.035;
+  const lastDigitX = center + (digits.length - 1) / 2 * digitStep;
   const progress = rolling
     ? clamp((run.time - run.scoreRoll.startedAt) / SCORE_ROLL_DURATION, 0, 1)
     : 1;
   const slide = progress * progress * (3 - 2 * progress);
 
   for (let index = 0; index < digits.length; index++) {
-    const x = center + (index - (digits.length - 1) / 2) * digitWidth;
+    const x = center + (index - (digits.length - 1) / 2) * digitStep;
     if (slide < 1 && digits[index] !== previous[index]) {
       ink.globalAlpha = (1 - slide) ** 2.5;
       ink.fillText(previous[index], x, baseline - slide * fontSize * 0.24);
@@ -810,9 +1048,8 @@ function drawRunScore() {
     }
   }
   const unitSize = Math.max(10, fontSize * 0.24);
-  ink.font = `500 ${unitSize}px "Martian Mono", monospace`;
-  ink.fillText('m', center + digits.length * digitWidth / 2 + unitSize * 0.34,
-    baseline - fontSize * 0.34);
+  ink.font = `400 ${unitSize}px "Inter", sans-serif`;
+  ink.fillText('m', lastDigitX + digitWidth / 2 + ink.measureText('m').width / 2, baseline);
   ink.restore();
 }
 
@@ -856,41 +1093,87 @@ function drawCollisionWarning(playerPosition) {
   ink.restore();
 }
 
+const rainDrops = Array.from({ length: 112 }, () => ({
+  x: Math.random(),
+  y: Math.random(),
+  speed: 230 + Math.random() * 290,
+  slant: 0.19 + Math.random() * 0.04,
+  length: 9 + Math.random() * 11,
+}));
+
+function drawRain() {
+  const intensity = rainIntensity();
+  if (intensity <= 0 || reducedMotion?.matches) return;
+  const count = clamp(Math.round(width * height / 10000), 16, rainDrops.length);
+  const streakScale = clamp(Math.sqrt(width * height / (540 * 650)), 1, 2.2);
+  const elapsed = run.time - run.rainStart;
+  const wrapWidth = width + 40;
+  const wrapHeight = height + 64;
+  ink.save();
+  ink.globalAlpha = intensity * (activeTheme === 'light' ? 0.15 : 0.18);
+  ink.strokeStyle = palette.score;
+  ink.lineWidth = Math.min(1.5, streakScale);
+  ink.beginPath();
+  for (let index = 0; index < count; index++) {
+    const drop = rainDrops[index];
+    const x = (drop.x * wrapWidth + elapsed * drop.speed * drop.slant) % wrapWidth - 20;
+    const y = (drop.y * wrapHeight + elapsed * drop.speed) % wrapHeight - 32;
+    const length = drop.length * streakScale;
+    ink.moveTo(x, y);
+    ink.lineTo(x + length * drop.slant, y + length);
+  }
+  ink.stroke();
+  ink.restore();
+}
+
 function render() {
   ink.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ink.clearRect(0, 0, width, height);
+  if (state === 'impact' && !reducedMotion?.matches) {
+    const shake = clamp(impactTime / 0.24, 0, 1);
+    const strength = 4 * (1 - shake) ** 2;
+    ink.translate(Math.sin(shake * TURN * 2.5) * strength,
+      Math.sin(shake * TURN * 3) * strength * 0.5);
+  }
   const { front, player, rear } = run;
   drawRunScore();
   const idleDrift = reducedMotion?.matches ? 0 : Math.sin(idleTime * 0.55) * 110;
   const driftBlend = state === 'ready' ? 1 : Math.max(0, 1 - run.time / 0.8);
   const backdropPosition = player.position + idleDrift * driftBlend;
   for (const range of mountainRanges) drawMountainRange(backdropPosition, range);
-  ink.translate(width / 2, height * 0.51);
+  drawRain();
+  ink.translate(width / 2, height * 0.51 + Math.min(height * 0.025, 20));
   ink.rotate(ANGLE);
   ink.scale(scale, scale);
   drawRoad(player.position);
 
   const gap = gaps();
-  const frontColor = run.impact === 'front' ? palette.warning
-    : dangerColor(gap.front, player.speed - front.speed, run.nearMiss.front.glow);
-  const rearColor = run.impact === 'rear' ? palette.warning
-    : dangerColor(gap.rear, rear.speed - player.speed, run.nearMiss.rear.glow);
+  const frontDanger = dangerLevel(gap.front, player.speed - front.speed, run.nearMiss.front.glow);
+  const rearDanger = dangerLevel(gap.rear, rear.speed - player.speed, run.nearMiss.rear.glow);
+  const frontImpact = run.impact === 'front';
+  const rearImpact = run.impact === 'rear';
+  const playerDanger = run.impact ? 1 : Math.max(frontDanger, rearDanger);
+  const playerColor = run.impact ? palette.warning : playerDanger > 0 ? dangerColor(playerDanger) : palette.playerOutline;
 
   drawCar(run.tail, player.position, palette.outerCar);
-  drawCar(rear, player.position, rearColor);
-  drawCar(player, player.position, run.impact ? palette.warning : palette.score,
-    Number(run.braking), run.brakePitch);
-  drawCar(front, player.position, frontColor, front.brakeLight);
-  drawCar(run.lead, player.position, palette.outerCar, run.lead.brakeLight);
+  drawCar(rear, player.position, rearImpact ? palette.warning : dangerColor(rearDanger),
+    0, rearImpact ? 1 : rearDanger);
+  drawCar(player, player.position, playerColor, run.brakePitch, playerDanger);
+  drawCar(front, player.position, frontImpact ? palette.warning : dangerColor(frontDanger),
+    0, frontImpact ? 1 : frontDanger);
+  drawCar(run.lead, player.position, palette.outerCar);
 
   if (run.impact) drawCollisionWarning(player.position);
 }
 
 function finishRun() {
   playLabel.textContent = 'Restart';
-  playIcon.src = 'assets/icon/restart.svg';
+  playIcon.src = 'assets/icon/restart.svg?v=assets-2';
   setState('over');
-  showLeaderboard(run.driverName, score());
+  if (!platform) {
+    run.leaderboardDay = leaderboardDay();
+    showLeaderboard(run.driverName, score());
+  }
 }
 
 function launchDelay(elapsed) {
@@ -899,10 +1182,8 @@ function launchDelay(elapsed) {
   return LAUNCH_DURATION * 0.9 * (progress - progress ** 3 + 0.5 * progress ** 4);
 }
 
-function updateBrakeHint() {
-  if (state !== 'running' || brakeHintComplete || !run.braking) return;
-  const closing = run.rear.speed - run.player.speed;
-  if (closing > 0 && gaps().rear <= trafficWarningGap(closing)) hint.classList.add('is-held');
+function showReleaseHint() {
+  if (!brakeHintComplete) hint.classList.add('is-held');
 }
 
 function finishBrakeHint() {
@@ -930,7 +1211,7 @@ function frame(now) {
         simulate(STEP);
         accumulator -= STEP;
       }
-      updateBrakeHint();
+      updateRain();
       updateScore();
     } else if (state === 'impact') {
       impactTime += dt;
@@ -945,7 +1226,7 @@ function frame(now) {
 }
 
 function updateMute() {
-  soundIcon.src = muted ? 'assets/icon/sound%20off.svg' : 'assets/icon/sound%20on.svg';
+  soundIcon.src = muted ? 'assets/icon/sound%20off.svg?v=assets-2' : 'assets/icon/sound%20on.svg?v=assets-2';
   mute.setAttribute('aria-pressed', String(muted));
 }
 
@@ -953,34 +1234,60 @@ game.addEventListener('pointerdown', event => {
   if (state !== 'running' || event.button !== 0 || event.target.closest('button')) return;
   event.preventDefault();
   primeAudio();
-  pointers.add(event.pointerId);
+  let ring = null;
+  if (event.pointerType === 'touch') {
+    ring = document.createElement('span');
+    ring.className = 'touch-ring';
+    ring.setAttribute('aria-hidden', 'true');
+    ring.style.left = `${event.clientX}px`;
+    ring.style.top = `${event.clientY}px`;
+    game.append(ring);
+  }
+  pointers.set(event.pointerId, ring);
+  showReleaseHint();
   game.setPointerCapture(event.pointerId);
 });
-window.addEventListener('pointerup', event => {
-  if (pointers.delete(event.pointerId)) finishBrakeHint();
-});
-for (const eventName of ['pointercancel', 'lostpointercapture']) {
-  window.addEventListener(eventName, event => pointers.delete(event.pointerId));
+
+function releasePointer(event) {
+  if (!pointers.has(event.pointerId)) return;
+  fadeTouchRing(pointers.get(event.pointerId));
+  pointers.delete(event.pointerId);
+  if (event.type === 'pointerup') finishBrakeHint();
+  else if (!pointers.size && !heldBrakeKeys.size && !brakeHintComplete) hint.classList.remove('is-held');
+}
+
+for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  window.addEventListener(eventName, releasePointer);
 }
 game.addEventListener('contextmenu', event => {
   if (!event.target.closest('button')) event.preventDefault();
 });
 window.addEventListener('keydown', event => {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
-      event.shiftKey || driverDialog.open) return;
+      event.shiftKey || game.inert || driverDialog.open) return;
+  if (platform && event.key === 'Escape' && (state === 'running' || state === 'paused')) {
+    event.preventDefault();
+    if (!event.repeat) {
+      if (state === 'running') pauseRun();
+      else play.click();
+    }
+    return;
+  }
   if (event.target.closest?.('button, input, textarea, select, a, [contenteditable], #leaderboard-scores')) return;
 
-  if (event.key === 'Enter' && (state === 'ready' || state === 'over')) {
+  if (event.key === 'Enter' && (state === 'ready' || state === 'over' || state === 'paused')) {
     event.preventDefault();
     if (!event.repeat && !menu.inert) play.click();
     return;
   }
 
+  if (platform && (brakeKeys.has(event.code) || event.code === 'ArrowUp')) event.preventDefault();
   if (state !== 'running' || !brakeKeys.has(event.code)) return;
   event.preventDefault();
   if (!event.repeat) {
     primeAudio();
     heldBrakeKeys.add(event.code);
+    showReleaseHint();
   }
 });
 window.addEventListener('keyup', event => {
@@ -988,13 +1295,18 @@ window.addEventListener('keyup', event => {
 });
 
 function interruptFrame() {
+  syncPlatformGameplay();
   syncAudioLevel();
   clearInput();
   lastFrame = null;
   accumulator = 0;
 }
 
-document.addEventListener('visibilitychange', interruptFrame);
+document.addEventListener('visibilitychange', () => {
+  interruptFrame();
+  if (!document.hidden && audio) primeAudio();
+  if (!platform) refreshLeaderboardDay();
+});
 window.addEventListener('blur', () => {
   windowActive = false;
   interruptFrame();
@@ -1002,13 +1314,23 @@ window.addEventListener('blur', () => {
 window.addEventListener('focus', () => {
   windowActive = true;
   interruptFrame();
+  if (audio) primeAudio();
 });
-window.addEventListener('pagehide', interruptFrame);
+window.addEventListener('pagehide', () => {
+  if (platform) windowActive = false;
+  interruptFrame();
+});
+window.addEventListener('pageshow', () => {
+  if (!platform) return;
+  windowActive = document.hasFocus();
+  interruptFrame();
+});
 window.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('resize', resize);
-game.addEventListener('pointerdown', event => {
-  if (!event.target.closest('button')) primeAudio();
-}, { once: true });
+document.addEventListener('click', event => {
+  if (event.isTrusted && audio?.context.state !== 'running' &&
+      !event.target.closest?.('button')) primeAudio();
+}, { capture: true });
 game.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (button && button !== mute && !button.disabled) playButtonSound();
@@ -1016,29 +1338,66 @@ game.addEventListener('click', event => {
     triggerHaptic('soft');
   }
 }, { capture: true });
-editDriver.addEventListener('click', () => {
-  if (menu.inert) return;
-  driverName.value = driverNickname;
+function openDriverDialog(setup = false) {
+  driverName.value = setup ? '' : driverNickname;
+  cancelDriver.textContent = setup ? 'Skip' : 'Cancel';
+  const focusTarget = setup ? cancelDriver : driverName;
+  focusTarget.setAttribute('autofocus', '');
   driverDialog.showModal();
-  driverName.select();
+  focusTarget.removeAttribute('autofocus');
+  if (!setup) driverName.select();
+}
+
+editDriver.addEventListener('click', () => {
+  if (!menu.inert) openDriverDialog();
 });
 cancelDriver.addEventListener('click', () => driverDialog.close());
 driverForm.addEventListener('submit', event => {
   event.preventDefault();
   const name = driverName.value.trim() || guestNickname;
+  if (name.length > driverName.maxLength && name !== guestNickname && name !== driverNickname) return;
   if (name !== driverNickname) {
     driverNickname = name;
     writeStorage('brake.driverName', name);
     if (state === 'over') {
       run.driverName = name;
-      showLeaderboard(name, score(), false);
+      if (run.leaderboardDay === leaderboardDay()) showLeaderboard(name, score(), false);
     }
   }
   driverDialog.close();
 });
+function pauseRun() {
+  if (state !== 'running') return;
+  clearInput();
+  playLabel.textContent = 'Resume';
+  playIcon.src = 'assets/icon/start.svg?v=assets-2';
+  setState('paused');
+}
+
+pauseGame?.addEventListener('click', pauseRun);
+
 play.addEventListener('click', async () => {
-  if (menu.inert) return;
+  if (menu.inert || game.inert) return;
   play.blur();
+  if (platform && (state === 'over' || state === 'paused')) {
+    const resume = state === 'paused';
+    primeAudio();
+    menu.inert = true;
+    game.inert = true;
+    try {
+      await platform.commercialBreak(syncAudioLevel);
+    } finally {
+      game.inert = false;
+      menu.inert = false;
+      syncAudioLevel();
+    }
+    if (resume) {
+      lastFrame = null;
+      accumulator = 0;
+      setState('running');
+      return;
+    }
+  }
   if (state !== 'over' || reducedMotion?.matches || !menu.animate) {
     start();
     return;
@@ -1076,10 +1435,47 @@ mute.addEventListener('click', () => {
   mute.blur();
 });
 
-document.fonts?.load('500 16px "Martian Mono"').catch(() => {});
+themeToggle.addEventListener('click', () => {
+  const theme = activeTheme === 'light' ? 'dark' : 'light';
+  applyTheme(theme);
+  writeStorage('brake.theme', theme);
+});
+applyTheme(readStorage('brake.theme'));
+
+document.fonts?.load('400 16px "Inter"').catch(() => {});
 run = freshRun();
+panelStatus.textContent = pickStatusMessage(startMessages);
 updateScore();
 updateMute();
 resize();
-showLeaderboard();
+if (!platform) showLeaderboard();
 requestAnimationFrame(frame);
+
+async function finishLoading() {
+  if (platform) {
+    await platform.ready;
+    await document.fonts?.ready;
+  }
+  if (!reducedMotion?.matches && launchScreen.animate) {
+    const fade = launchScreen.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: 220,
+      easing: 'ease-out',
+      fill: 'forwards',
+    });
+    await fade.finished.catch(() => {});
+  }
+  launchScreen.hidden = true;
+  game.inert = false;
+  platform?.loadingFinished();
+  if (!platform && firstVisit) openDriverDialog(true);
+}
+
+if (platform) finishLoading();
+else setTimeout(finishLoading, 1800);
+
+function refreshLeaderboardDay() {
+  if (!document.hidden && (state === 'ready' || state === 'over') &&
+      displayedLeaderboardDay !== leaderboardDay()) showLeaderboard();
+}
+
+if (!platform) setInterval(refreshLeaderboardDay, 15000);

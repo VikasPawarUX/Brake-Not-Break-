@@ -1,0 +1,28 @@
+.panel-actions {
+  grid-template-columns: repeat(2, auto) minmax(0, 1fr);
+}
+
+.poki-controls {
+  margin: 0 0 12px;
+  color: var(--secondary);
+  font-size: .75rem;
+}
+
+.poki-touch { display: none; }
+
+@media (any-pointer: coarse) {
+  .poki-touch { display: block; }
+  .poki-keyboard { display: none; }
+}
+
+#pause-game {
+  position: absolute;
+  top: var(--edge-top);
+  right: var(--edge-right);
+  z-index: 1;
+  font-size: .875rem;
+}
+
+@media (max-height: 420px) {
+  .poki-controls { margin-bottom: 8px; }
+}

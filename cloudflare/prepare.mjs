@@ -2,9 +2,9 @@ import { copyFile, mkdir } from 'node:fs/promises';
 
 const files = [
   'index.html', 'style.css', 'game.js', 'leaderboard.js', 'leaderboard-config.js',
-  'assets/font/MartianMono-Light.ttf', 'assets/font/MartianMono-Medium.ttf',
-  'assets/font/OFL.txt',
-  'assets/icon/tap.svg', 'assets/icon/release.svg', 'assets/icon/driver.svg', 'assets/icon/start.svg', 'assets/icon/restart.svg', 'assets/icon/sound on.svg', 'assets/icon/sound off.svg',
+  'assets/font/Inter-Variable.ttf', 'assets/font/Inter-OFL.txt',
+  'assets/icon/gameicon.jpg', 'assets/icon/splash.png', 'assets/icon/dark.svg', 'assets/icon/light.svg',
+  'assets/icon/alert.svg', 'assets/icon/edit.svg', 'assets/icon/driver.svg', 'assets/icon/start.svg', 'assets/icon/restart.svg', 'assets/icon/sound on.svg', 'assets/icon/sound off.svg',
 ];
 
 for (const path of files) {

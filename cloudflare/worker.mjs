@@ -1,5 +1,13 @@
 const rankOrder = 'meters DESC, reached_at ASC, driver_id ASC';
-const topScores = `SELECT name, meters FROM leaderboard ORDER BY ${rankOrder} LIMIT 10`;
+const topScores = `SELECT name, meters FROM daily_leaderboard WHERE day = ? ORDER BY ${rankOrder} LIMIT 10`;
+const dailyCalendar = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+function leaderboardDay(timestamp) {
+  const [month, day, year] = dailyCalendar.format(timestamp).split('/');
+  return `${year}-${month}-${day}`;
+}
 
 function json(payload, status = 200, headers = {}) {
   return Response.json(payload, {
@@ -34,8 +42,10 @@ async function readSubmission(request) {
 }
 
 async function leaderboard(request, database) {
+  const timestamp = Date.now();
+  const day = leaderboardDay(timestamp);
   if (request.method === 'GET') {
-    const { results } = await database.prepare(topScores).all();
+    const { results } = await database.prepare(topScores).bind(day).all();
     return json({ scores: results });
   }
   if (request.method !== 'POST') {
@@ -55,23 +65,24 @@ async function leaderboard(request, database) {
   const driverId = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   const [, { results: scores }, { results: [standing] }] = await database.batch([
     database.prepare(`
-      INSERT INTO leaderboard (driver_id, name, meters, reached_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT (driver_id) DO UPDATE SET
+      INSERT INTO daily_leaderboard (day, driver_id, name, meters, reached_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (day, driver_id) DO UPDATE SET
         name = excluded.name,
-        meters = MAX(leaderboard.meters, excluded.meters),
-        reached_at = CASE WHEN excluded.meters > leaderboard.meters
-          THEN excluded.reached_at ELSE leaderboard.reached_at END
-    `).bind(driverId, name, meters, Date.now()),
-    database.prepare(topScores),
+        meters = MAX(daily_leaderboard.meters, excluded.meters),
+        reached_at = CASE WHEN excluded.meters > daily_leaderboard.meters
+          THEN excluded.reached_at ELSE daily_leaderboard.reached_at END
+    `).bind(day, driverId, name, meters, timestamp),
+    database.prepare(topScores).bind(day),
     database.prepare(`
       SELECT COUNT(*) + 1 AS rank
-      FROM leaderboard AS driver
-      JOIN leaderboard AS rival
-        ON rival.meters > driver.meters
-        OR (rival.meters = driver.meters AND
+      FROM daily_leaderboard AS driver
+      JOIN daily_leaderboard AS rival
+        ON rival.day = driver.day AND (
+          rival.meters > driver.meters OR (rival.meters = driver.meters AND
             (rival.reached_at, rival.driver_id) < (driver.reached_at, driver.driver_id))
-      WHERE driver.driver_id = ?
-    `).bind(driverId),
+        )
+      WHERE driver.day = ? AND driver.driver_id = ?
+    `).bind(day, driverId),
   ]);
   return json({ scores, rank: standing.rank });
 }

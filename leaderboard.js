@@ -2,12 +2,21 @@
 
 const rankStat = document.querySelector('#rank-stat');
 const playerRank = document.querySelector('#player-rank');
+const leaderboard = document.querySelector('#leaderboard');
 const leaderboardStatus = document.querySelector('#leaderboard-status');
 const leaderboardScores = document.querySelector('#leaderboard-scores');
 const leaderboardStrip = document.querySelector('.leaderboard-strip');
 const scoresPrev = document.querySelector('#scores-prev');
 const scoresNext = document.querySelector('#scores-next');
+const leaderboardCalendar = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York' });
+let displayedLeaderboardDay;
 let leaderboardRequest = 0;
+let topDriversDay;
+let topDrivers = [];
+
+function leaderboardDay() {
+  return leaderboardCalendar.format(new Date());
+}
 let leaderboardToken;
 let submissions = Promise.resolve();
 
@@ -32,9 +41,18 @@ function isLeaderboardDemo() {
   );
 }
 
+function getTopDrivers() {
+  return topDriversDay === leaderboardDay() ? topDrivers : [];
+}
+
 function renderScores(scores) {
+  topDriversDay = displayedLeaderboardDay;
+  topDrivers = scores.slice(0, 10).map(entry => {
+    const guestId = /^Guest (\d{3,})$/i.exec(entry.name);
+    return { name: guestId ? `Guest …${guestId[1].slice(-3)}` : entry.name, meters: entry.meters };
+  });
   leaderboardScores.replaceChildren();
-  for (const [index, entry] of scores.slice(0, 10).entries()) {
+  for (const [index, entry] of topDrivers.entries()) {
     const row = document.createElement('li');
     const driver = document.createElement('span');
     const score = document.createElement('strong');
@@ -44,9 +62,11 @@ function renderScores(scores) {
     row.append(score, driver);
     leaderboardScores.append(row);
   }
-  leaderboardStatus.textContent = scores.length ? '' : 'No scores yet.';
+  leaderboard.hidden = !scores.length;
+  leaderboardStatus.textContent = '';
   leaderboardStrip.hidden = !scores.length;
   updateScrollButtons();
+  window.dispatchEvent(new Event('bumper-leaderboard-updated'));
 }
 
 function getLeaderboardToken() {
@@ -86,14 +106,21 @@ async function requestLeaderboard(endpoint, name, meters) {
   }
 }
 
+function showLeaderboardStatus(message) {
+  leaderboardStatus.textContent = message;
+  leaderboard.hidden = false;
+}
+
 async function showLeaderboard(name, meters, opening = true) {
   const request = ++leaderboardRequest;
+  displayedLeaderboardDay = leaderboardDay();
   const endpoint = window.bumperLeaderboardEndpoint;
   rankStat.hidden = true;
   if (opening) {
     leaderboardScores.replaceChildren();
     leaderboardStrip.hidden = true;
-    leaderboardStatus.textContent = 'Loading scores…';
+    leaderboard.hidden = true;
+    leaderboardStatus.textContent = '';
     leaderboardScores.scrollLeft = 0;
   }
 
@@ -102,7 +129,7 @@ async function showLeaderboard(name, meters, opening = true) {
     return;
   }
   if (!endpoint) {
-    leaderboardStatus.textContent = 'Leaderboard is offline.';
+    showLeaderboardStatus('Leaderboard is offline.');
     return;
   }
 
@@ -112,7 +139,7 @@ async function showLeaderboard(name, meters, opening = true) {
     const payload = await pending;
     if (request !== leaderboardRequest) return;
     if (payload.status) {
-      leaderboardStatus.textContent = payload.status;
+      showLeaderboardStatus(payload.status);
       return;
     }
     renderScores(payload.scores);
@@ -121,7 +148,7 @@ async function showLeaderboard(name, meters, opening = true) {
       rankStat.hidden = false;
     }
   } catch {
-    if (request === leaderboardRequest) leaderboardStatus.textContent = 'Leaderboard is unavailable.';
+    if (request === leaderboardRequest) showLeaderboardStatus('Leaderboard is unavailable.');
   }
 }
 
