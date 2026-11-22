@@ -995,7 +995,7 @@ function drawMountainRange(position, range) {
   const first = Math.floor(shift / step);
   const last = Math.ceil((shift + width) / step);
 
-  ink.fillStyle = palette[range.color];
+  ink.fillStyle = range.fill ?? palette[range.color];
   ink.beginPath();
   ink.moveTo(0, height);
   for (let point = first; point <= last; point++) {
@@ -1004,6 +1004,25 @@ function drawMountainRange(position, range) {
   ink.lineTo(width, height);
   ink.closePath();
   ink.fill();
+  if (range.pines) {
+    ink.beginPath();
+    for (let point = first; point < last; point++) {
+      if (Math.sin(point * 4.61 + 1.2) < .26) continue;
+      const left = ridgePointHeight(point, range);
+      const right = ridgePointHeight(point + 1, range);
+      for (let tree = 0; tree < 3; tree++) {
+        const fraction = .24 + tree * .14;
+        const x = (point + fraction) * step - shift;
+        const y = left + (right - left) * fraction + 1;
+        const size = clamp(height * (.013 + .006 * Math.abs(Math.sin(point + tree * 4))), 6, 17);
+        ink.moveTo(x, y - size);
+        ink.lineTo(x + size * .30, y + 1);
+        ink.lineTo(x - size * .30, y + 1);
+        ink.closePath();
+      }
+    }
+    ink.fill();
+  }
 }
 
 const mountainRanges = [
@@ -1126,21 +1145,102 @@ function drawRain() {
   ink.restore();
 }
 
+let threeScene;
+const threeView = { cars: [], colors: [], warnings: [] };
+const nightStars = [[.08,.19],[.15,.28],[.23,.12],[.38,.07],[.49,.19],[.61,.11],[.72,.24],[.87,.14],[.94,.31]];
+let skyGradient;
+let skyHeight = -1;
+const nightMountainRanges = [
+  { color: 'farMountain', fill: '#252c43', parallax: .05, spacing: .17, heightRatio: .45, phase: .4 },
+  { ...mountainRanges[0], fill: '#1b2239' },
+  { ...mountainRanges[1], fill: '#141a2c', pines: true },
+];
+
+function drawThreeSky() {
+  if (skyHeight !== height) {
+    skyHeight = height;
+    skyGradient = ink.createLinearGradient(0, 0, 0, height * .68);
+    skyGradient.addColorStop(0, '#090d1b');
+    skyGradient.addColorStop(.65, '#202840');
+    skyGradient.addColorStop(1, '#454b62');
+  }
+  ink.fillStyle = skyGradient;
+  ink.fillRect(-6, -6, width + 12, height + 12);
+  ink.fillStyle = 'rgba(241, 240, 226, .55)';
+  for (const [x, y] of nightStars) ink.fillRect(x * width, y * height, 1.4, 1.4);
+  const radius = clamp(Math.min(width, height) * .047, 14, 48);
+  ink.save();
+  ink.shadowColor = 'rgba(255, 200, 147, .4)';
+  ink.shadowBlur = 19 * pixelRatio;
+  ink.fillStyle = '#e9be94';
+  ink.beginPath();
+  ink.arc(width * .77, height * .39, radius, 0, TURN);
+  ink.fill();
+  ink.restore();
+}
+
+function drawThreeTraffic(front, player, rear, frontColor, playerColor, rearColor,
+  frontWarning, playerWarning, rearWarning, shakeX, shakeY) {
+  if (!threeScene) return false;
+  const { cars, colors, warnings } = threeView;
+  cars[0] = run.tail; cars[1] = rear; cars[2] = player; cars[3] = front; cars[4] = run.lead;
+  colors[0] = palette.outerCar; colors[1] = rearColor; colors[2] = playerColor;
+  colors[3] = frontColor; colors[4] = palette.outerCar;
+  warnings[1] = rearWarning; warnings[2] = playerWarning; warnings[3] = frontWarning;
+  threeView.width = width;
+  threeView.height = height;
+  threeView.scale = scale;
+  threeView.roadY = height * .51 + Math.min(height * .025, 20);
+  threeView.origin = player.position;
+  threeView.shakeX = shakeX;
+  threeView.shakeY = shakeY;
+  threeView.suspension = settings.suspension;
+  threeView.brakePitch = run.brakePitch;
+  threeView.braking = run.braking;
+  threeView.light = activeTheme === 'light';
+  try {
+    if (threeScene.draw(threeView)) return true;
+  } catch (error) {
+    console.warn('Three.js rendering unavailable. Using Canvas 2D.', error);
+  }
+  threeScene.hide();
+  threeScene = undefined;
+  return false;
+}
+
+async function initializeThreeScene() {
+  if (platform || new URLSearchParams(location.search).get('renderer') === '2d') return;
+  try {
+    const { createThreeScene } = await import('./scene-3d.mjs');
+    threeScene = createThreeScene(game, {
+      angle: ANGLE, carScale: CAR_SCALE, halfLength: BODY_HALF_LENGTH,
+      wheelRadius: WHEEL_RADIUS, wheelOffsets: WHEEL_OFFSETS, roadHeight,
+    });
+  } catch (error) {
+    console.warn('Three.js unavailable. Using Canvas 2D.', error);
+  }
+}
+
 function render() {
   ink.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   ink.clearRect(0, 0, width, height);
+  let shakeX = 0;
+  let shakeY = 0;
   if (state === 'impact' && !reducedMotion?.matches) {
     const shake = clamp(impactTime / 0.24, 0, 1);
     const strength = 4 * (1 - shake) ** 2;
-    ink.translate(Math.sin(shake * TURN * 2.5) * strength,
-      Math.sin(shake * TURN * 3) * strength * 0.5);
+    shakeX = Math.sin(shake * TURN * 2.5) * strength;
+    shakeY = Math.sin(shake * TURN * 3) * strength * 0.5;
+    ink.translate(shakeX, shakeY);
   }
   const { front, player, rear } = run;
+  const night = threeScene && activeTheme === 'dark';
+  if (night) drawThreeSky();
   drawRunScore();
   const idleDrift = reducedMotion?.matches ? 0 : Math.sin(idleTime * 0.55) * 110;
   const driftBlend = state === 'ready' ? 1 : Math.max(0, 1 - run.time / 0.8);
   const backdropPosition = player.position + idleDrift * driftBlend;
-  for (const range of mountainRanges) drawMountainRange(backdropPosition, range);
+  for (const range of night ? nightMountainRanges : mountainRanges) drawMountainRange(backdropPosition, range);
   drawRain();
   ink.translate(width / 2, height * 0.51 + Math.min(height * 0.025, 20));
   ink.rotate(ANGLE);
@@ -1155,13 +1255,18 @@ function render() {
   const playerDanger = run.impact ? 1 : Math.max(frontDanger, rearDanger);
   const playerColor = run.impact ? palette.warning : playerDanger > 0 ? dangerColor(playerDanger) : palette.playerOutline;
 
-  drawCar(run.tail, player.position, palette.outerCar);
-  drawCar(rear, player.position, rearImpact ? palette.warning : dangerColor(rearDanger),
-    0, rearImpact ? 1 : rearDanger);
-  drawCar(player, player.position, playerColor, run.brakePitch, playerDanger);
-  drawCar(front, player.position, frontImpact ? palette.warning : dangerColor(frontDanger),
-    0, frontImpact ? 1 : frontDanger);
-  drawCar(run.lead, player.position, palette.outerCar);
+  const frontColor = frontImpact ? palette.warning : dangerColor(frontDanger);
+  const rearColor = rearImpact ? palette.warning : dangerColor(rearDanger);
+  const frontWarning = frontImpact ? 1 : frontDanger;
+  const rearWarning = rearImpact ? 1 : rearDanger;
+  if (!drawThreeTraffic(front, player, rear, frontColor, playerColor, rearColor,
+    frontWarning, playerDanger, rearWarning, shakeX, shakeY)) {
+    drawCar(run.tail, player.position, palette.outerCar);
+    drawCar(rear, player.position, rearColor, 0, rearWarning);
+    drawCar(player, player.position, playerColor, run.brakePitch, playerDanger);
+    drawCar(front, player.position, frontColor, 0, frontWarning);
+    drawCar(run.lead, player.position, palette.outerCar);
+  }
 
   if (run.impact) drawCollisionWarning(player.position);
 }
@@ -1450,6 +1555,7 @@ updateMute();
 resize();
 if (!platform) showLeaderboard();
 requestAnimationFrame(frame);
+initializeThreeScene();
 
 async function finishLoading() {
   if (platform) {
