@@ -6,10 +6,10 @@
   <meta name="theme-color" content="#000000">
   <title>Bumper to Bumper</title>
   <link rel="icon" type="image/jpeg" sizes="512x512" href="assets/icon/gameicon.jpg?v=assets-2">
-  <link rel="stylesheet" href="style.css?v=three-prototype">
+  <link rel="stylesheet" href="style.css?v=rear-honk">
   <script src="leaderboard-config.js" defer></script>
   <script src="leaderboard.js?v=green-overtakes" defer></script>
-  <script src="game.js?v=three-prototype" defer></script>
+  <script src="game.js?v=rear-honk" defer></script>
 </head>
 <body>
   <div id="launch-screen" role="status" aria-label="Loading">
@@ -20,6 +20,8 @@
   </div>
   <main id="game" inert aria-label="Bumper to Bumper Downhill braking game" data-state="ready">
     <canvas id="road" aria-hidden="true"></canvas>
+    <canvas class="foreground-overlay" aria-hidden="true"></canvas>
+    <canvas class="crash-overlay" aria-hidden="true" hidden></canvas>
     <output id="distance" class="live-distance" aria-label="Current distance" aria-live="off">0m</output>
     <div class="menu">
       <section class="control-panel" aria-label="Game controls">

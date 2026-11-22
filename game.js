@@ -6,6 +6,11 @@ const platform = window.bumperPlatform;
 const pauseGame = document.querySelector('#pause-game');
 const canvas = document.querySelector('#road');
 const ink = canvas.getContext('2d');
+const foregroundOverlay = document.querySelector('.foreground-overlay');
+const foregroundInk = foregroundOverlay.getContext('2d');
+const crashOverlay = document.querySelector('.crash-overlay');
+const crashInk = crashOverlay.getContext('2d');
+const CRASH_OVERLAY_SIZE = 64;
 const play = document.querySelector('#play');
 const playIcon = document.querySelector('#play-icon');
 const playLabel = document.querySelector('#play-label');
@@ -42,6 +47,8 @@ const SCORE_ROLL_DURATION = 0.15;
 const MILESTONE_METERS = 50;
 const MILESTONE_INTERVAL = MILESTONE_METERS / METERS_PER_UNIT;
 const STAMP_DURATION = 0.56;
+const STAMP_LIFETIME = 0.9;
+const HONK_GAP = 16;
 const IMPACT_DURATION = 0.42;
 // Profiles run from the rear lamp corner to the front bumper.
 const carProfiles = {
@@ -139,7 +146,6 @@ let run;
 let brakeHintComplete = false;
 let impactTime = 0;
 let lastFrame = null;
-let idleTime = 0;
 let windowActive = true;
 let accumulator = 0;
 let width = 0;
@@ -266,7 +272,6 @@ function freshRun() {
     },
     lastNearMiss: -Infinity,
     rearHornEncounter: false,
-    lastRearHorn: -Infinity,
     milestoneStamp: null,
     overtakeMarkers: [],
     replacedMilestones: new Set(),
@@ -414,6 +419,8 @@ function playNoise(type, from, to, start, length, volume, attack) {
   playAudioVoice(source, filter, start, length, volume, attack);
 }
 
+let hornEndsAt = -Infinity;
+
 function sound(event) {
   if (muted || audio?.context.state !== 'running') return;
   const now = audio.context.currentTime;
@@ -431,8 +438,10 @@ function sound(event) {
       playTone('sine', 880, 880, now + 0.055, 0.16, 0.045, 0.008);
       break;
     case 'horn':
-      playTone('triangle', 435, 425, now, 0.24, 0.095, 0.022);
-      playTone('triangle', 540, 530, now, 0.20, 0.047, 0.027);
+      if (now < hornEndsAt) break;
+      hornEndsAt = now + 0.28;
+      playTone('triangle', 435, 425, now, 0.28, 0.16, 0.018);
+      playTone('triangle', 560, 546, now, 0.24, 0.078, 0.022);
       break;
     case 'escape':
       playTone('sine', 690, 510, now, 0.065, 0.032);
@@ -692,20 +701,16 @@ function simulate(dt) {
   }
 }
 
-function updateRearHorn(gap, previousGap) {
-  const closing = run.rear.speed - run.player.speed;
-  const warningGap = trafficWarningGap(closing) + 6;
-  if (gap > warningGap + 10) run.rearHornEncounter = false;
-  if (run.rearHornEncounter || closing <= 0 || gap >= previousGap || gap > warningGap) return;
+function updateRearHorn(gap) {
+  if (gap > HONK_GAP + 8) run.rearHornEncounter = false;
+  if (run.rearHornEncounter || gap > HONK_GAP) return;
   run.rearHornEncounter = true;
-  if (run.time - run.lastRearHorn < 6 || Math.random() >= 0.65) return;
-  run.lastRearHorn = run.time;
   sound('horn');
 }
 
 function updateNearMisses(before, dt) {
   const after = gaps();
-  updateRearHorn(after.rear, before.rear);
+  updateRearHorn(after.rear);
   for (const side of ['front', 'rear']) {
     const cue = run.nearMiss[side];
     const opening = after[side] - before[side];
@@ -729,7 +734,7 @@ function setOvertakeMarkers() {
       name: driver.name,
       meters: driver.meters,
       position: (driver.meters + 1) / METERS_PER_UNIT,
-      passedAt: null,
+      stampAge: null,
       lane: 0,
     }))
     .sort((a, b) => a.position - b.position);
@@ -751,8 +756,8 @@ function markOvertakes(meters) {
   let overtookDriver = false;
   for (const marker of run.overtakeMarkers) {
     if (marker.meters >= meters) break;
-    if (marker.passedAt !== null) continue;
-    marker.passedAt = run.time;
+    if (marker.stampAge !== null) continue;
+    marker.stampAge = 0;
     overtookDriver = true;
   }
   return overtookDriver;
@@ -768,12 +773,16 @@ function resize() {
   pixelRatio = Math.min(window.devicePixelRatio || 1, 2.5);
   canvas.width = Math.round(width * pixelRatio);
   canvas.height = Math.round(height * pixelRatio);
+  foregroundOverlay.width = Math.round(width * Math.min(pixelRatio, 1.5));
+  foregroundOverlay.height = Math.round(height * Math.min(pixelRatio, 1.5));
+  crashOverlay.width = crashOverlay.height = Math.round(CRASH_OVERLAY_SIZE * pixelRatio);
   scale = clamp(width / 495, 0.45, 1.45) * CAMERA_ZOOM;
   layoutOvertakeMarkers();
 }
 
-function drawMilestoneCheck(age) {
-  if (age >= 0.12 && age < STAMP_DURATION) {
+function drawMilestoneCheck(ink, age) {
+  if (age >= STAMP_LIFETIME) return;
+  if (!reducedMotion?.matches && age >= 0.12 && age < STAMP_DURATION) {
     const progress = (age - 0.12) / (STAMP_DURATION - 0.12);
     const radius = 4 + 13 * (1 - (1 - progress) ** 2);
     ink.lineWidth = 1.15;
@@ -785,7 +794,7 @@ function drawMilestoneCheck(age) {
     ink.globalAlpha = 1;
   }
 
-  if (age < 0.18) {
+  if (!reducedMotion?.matches && age < 0.18) {
     const stampScale = age < 0.075
       ? 0.65 + 0.55 * age / 0.075
       : 1 + 0.20 * (0.18 - age) / 0.105;
@@ -796,6 +805,8 @@ function drawMilestoneCheck(age) {
   ink.lineWidth = 1.5;
   ink.lineJoin = 'round';
   ink.lineCap = 'round';
+  const fade = clamp((age - STAMP_DURATION) / (STAMP_LIFETIME - STAMP_DURATION), 0, 1);
+  ink.globalAlpha = 1 - fade * fade * (3 - 2 * fade);
   ink.strokeStyle = age < STAMP_DURATION ? palette.stamp : palette.check;
   ink.beginPath();
   ink.moveTo(-4, -4);
@@ -804,76 +815,98 @@ function drawMilestoneCheck(age) {
   ink.stroke();
 }
 
-function drawMilestonePost(label, color, maxWidth) {
-  ink.lineWidth = 1;
-  ink.strokeStyle = palette.milestonePost;
-  ink.strokeRect(-1.5, -9.5, 3, 10);
-  ink.fillStyle = palette.milestoneText;
-  ink.fillRect(-1, -9, 2, 2);
-  ink.fillStyle = color;
-  ink.font = '400 13px "Inter", sans-serif';
+function drawMilestonePost(ink, label, stemHeight, remaining, anchor) {
+  const progress = clamp(remaining / (MILESTONE_INTERVAL * .38), 0, 1);
+  const opacity = .55 * progress * progress * (3 - 2 * progress);
+  if (threeScene) {
+    threeScene.addMilestoneStem(anchor, stemHeight / scale, 1.5 / scale, palette.milestonePost, opacity);
+  } else {
+    ink.lineWidth = 1.5;
+    ink.strokeStyle = palette.milestonePost;
+    ink.globalAlpha = opacity;
+    ink.beginPath();
+    ink.moveTo(0, 0);
+    ink.lineTo(0, -stemHeight);
+    ink.stroke();
+    ink.fillStyle = palette.milestonePost;
+    ink.beginPath();
+    ink.ellipse(0, 0, 3.5, 1.4, 0, 0, TURN);
+    ink.fill();
+    ink.globalAlpha = 1;
+  }
+  ink.fillStyle = palette.score;
+  ink.font = '700 16px "Open Sans", sans-serif';
   ink.textAlign = 'center';
-  ink.textBaseline = 'top';
-  ink.fillText(label, 0, 4, maxWidth);
+  ink.textBaseline = 'bottom';
+  ink.fillText(label, 0, -stemHeight - 7, 112);
 }
 
-function drawRoad(origin) {
+function drawRoadForeground(origin, roadY, night) {
+  const reach = Math.hypot(width, height) * 2 / scale;
+  ink.save();
+  ink.translate(width / 2, roadY);
+  ink.rotate(ANGLE);
+  ink.scale(scale, scale);
+  ink.fillStyle = activeTheme === 'light' ? '#cecfcd' : night ? '#121727' : '#141418';
+  ink.beginPath();
+  ink.moveTo(-reach, roadHeight(origin - reach));
+  for (let x = -reach + 3; x < reach; x += 3) ink.lineTo(x, roadHeight(origin + x));
+  ink.lineTo(reach, roadHeight(origin + reach));
+  ink.lineTo(reach, reach);
+  ink.lineTo(-reach, reach);
+  ink.closePath();
+  ink.fill();
+  ink.restore();
+}
+
+function placeMilestone(ink, position, origin) {
+  const offset = position - origin;
+  if (threeScene) {
+    const { x, y } = threeScene.roadCenter(offset);
+    ink.translate(x * scale, y * scale);
+    return { x, y };
+  }
+  const y = roadHeight(position);
+  ink.translate((offset * Math.cos(ANGLE) - y * Math.sin(ANGLE)) * scale,
+    (offset * Math.sin(ANGLE) + y * Math.cos(ANGLE)) * scale);
+}
+
+function drawMilestones(ink, origin) {
   const start = origin - width / scale - 20;
   const end = origin + width / scale + 20;
-  ink.lineWidth = 1 / scale;
-  ink.strokeStyle = palette.road;
-  ink.beginPath();
-  ink.moveTo(start - origin, roadHeight(start));
-  for (let position = start + 3; position <= end; position += 3) {
-    ink.lineTo(position - origin, roadHeight(position));
-  }
-  ink.stroke();
-
-  // Stones and distance posts stay fixed in world coordinates.
-  const spacing = 61;
-  for (let cell = Math.floor(start / spacing); cell * spacing < end; cell++) {
-    const position = cell * spacing + 12 + 18 * Math.sin(cell * 12.9898);
-    const offset = 7 + 9 * Math.abs(Math.sin(cell * 4.23));
-    ink.fillStyle = cell % 3 === 0 ? palette.brightStone : palette.stone;
-    ink.beginPath();
-    ink.ellipse(position - origin, roadHeight(position) + offset,
-      cell % 3 === 0 ? 2.2 : 1.2, 0.85, 0, 0, TURN);
-    ink.fill();
-  }
-
   const first = Math.max(1, Math.ceil(start / MILESTONE_INTERVAL));
+  const stemHeight = clamp(height * .19, 68, 144);
   const stamp = run.milestoneStamp;
   const passedMarker = Math.floor(origin / MILESTONE_INTERVAL);
   for (let marker = first; marker * MILESTONE_INTERVAL <= end; marker++) {
     if (run.replacedMilestones.has(marker)) continue;
     const position = marker * MILESTONE_INTERVAL;
     ink.save();
-    ink.translate(position - origin, roadHeight(position) + 22 / scale);
-    ink.rotate(-ANGLE);
-    ink.scale(1 / scale, 1 / scale);
+    const anchor = placeMilestone(ink, position, origin);
     if (marker <= passedMarker) {
-      drawMilestoneCheck(stamp?.marker === marker ? stamp.age : Infinity);
+      ink.translate(0, -stemHeight - 8);
+      drawMilestoneCheck(ink, stamp?.marker === marker ? stamp.age : Infinity);
     } else {
-      drawMilestonePost(`${marker * MILESTONE_METERS}m`, palette.milestoneText, 112);
+      drawMilestonePost(ink, `${marker * MILESTONE_METERS} m`, stemHeight, position - origin, anchor);
     }
     ink.restore();
   }
-  drawOvertakeMarkers(origin, start, end);
+  drawOvertakeMarkers(ink, origin, start, end, stemHeight);
 }
 
-function drawOvertakeMarkers(origin, start, end) {
+function drawOvertakeMarkers(ink, origin, start, end, stemHeight) {
   for (const marker of run.overtakeMarkers) {
     if (marker.position < start || marker.position > end) continue;
 
     ink.save();
-    ink.translate(marker.position - origin, roadHeight(marker.position) + (22 + marker.lane * 31) / scale);
-    ink.rotate(-ANGLE);
-    ink.scale(1 / scale, 1 / scale);
-    if (marker.passedAt !== null) {
-      const age = reducedMotion?.matches || run.impact ? Infinity : run.time - marker.passedAt;
-      drawMilestoneCheck(age);
+    const anchor = placeMilestone(ink, marker.position, origin);
+    const postHeight = stemHeight + marker.lane * 25;
+    if (marker.stampAge !== null) {
+      const age = marker.stampAge;
+      ink.translate(0, -postHeight - 8);
+      drawMilestoneCheck(ink, age);
     } else {
-      drawMilestonePost(marker.name, palette.milestoneText, 112);
+      drawMilestonePost(ink, marker.name, postHeight, marker.position - origin, anchor);
     }
     ink.restore();
   }
@@ -918,19 +951,9 @@ function drawCar(car, origin, color, brakePitch = 0, warningFill = 0) {
   ink.closePath();
   ink.fill();
   ink.stroke();
-  if (car === run.player) {
-    ink.clip();
-    ink.globalAlpha = 0.19;
-    ink.lineWidth = 1;
-    ink.beginPath();
-    for (let x = -BODY_HALF_LENGTH - 20; x <= BODY_HALF_LENGTH; x += 2.5) {
-      ink.moveTo(x, 0);
-      ink.lineTo(x + 16, -28);
-    }
-    ink.stroke();
-  }
   ink.restore();
 
+  ink.fillStyle = palette.background;
   for (const { x, y } of wheels) {
     ink.beginPath();
     ink.arc(x, y, WHEEL_RADIUS, 0, TURN);
@@ -1044,7 +1067,7 @@ function drawRunScore() {
   ink.textAlign = 'center';
   ink.textBaseline = 'alphabetic';
 
-  ink.font = `400 ${fontSize}px "Inter", sans-serif`;
+  ink.font = `700 ${fontSize}px "Open Sans", sans-serif`;
   ink.fillStyle = palette.score;
   const digitWidth = ink.measureText('0').width;
   const digitStep = digitWidth - fontSize * 0.035;
@@ -1067,23 +1090,29 @@ function drawRunScore() {
     }
   }
   const unitSize = Math.max(10, fontSize * 0.24);
-  ink.font = `400 ${unitSize}px "Inter", sans-serif`;
+  ink.font = `700 ${unitSize}px "Open Sans", sans-serif`;
   ink.fillText('m', lastDigitX + digitWidth / 2 + ink.measureText('m').width / 2, baseline);
   ink.restore();
 }
 
-function drawCollisionWarning(playerPosition) {
+function drawCollisionWarning(playerPosition, roadY, shakeX, shakeY) {
   const contact = run.impact === 'front' ? HALF_LENGTH : -HALF_LENGTH;
   const pop = reducedMotion?.matches ? 1 : clamp(impactTime / 0.14, 0, 1);
   const jiggle = reducedMotion?.matches ? 1 : clamp(impactTime / 0.34, 0, 1);
   const resultsTime = reducedMotion?.matches ? 0 : Math.max(0, impactTime - IMPACT_DURATION);
   const tilt = Math.sin(jiggle * TURN * 2.5) * 0.28 * (1 - jiggle) ** 1.5
     + Math.sin(resultsTime * TURN * 1.75) * 0.1;
-  const size = (0.72 + 0.28 * (1 - (1 - pop) ** 2)) / scale;
-
+  const size = 0.72 + 0.28 * (1 - (1 - pop) ** 2);
+  const roadHeightAtContact = roadHeight(playerPosition + contact);
+  const x = width / 2 + (contact * Math.cos(ANGLE) - roadHeightAtContact * Math.sin(ANGLE)) * scale + shakeX;
+  const y = roadY + (contact * Math.sin(ANGLE) + roadHeightAtContact * Math.cos(ANGLE)) * scale + shakeY;
+  crashOverlay.hidden = false;
+  crashOverlay.style.transform = `translate(${x - CRASH_OVERLAY_SIZE / 2}px, ${y - 31 * CAR_SCALE * scale - CRASH_OVERLAY_SIZE / 2}px)`;
+  const ink = crashInk;
+  ink.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ink.clearRect(0, 0, CRASH_OVERLAY_SIZE, CRASH_OVERLAY_SIZE);
   ink.save();
-  ink.translate(contact, roadHeight(playerPosition + contact) - 17 * CAR_SCALE);
-  ink.rotate(-ANGLE);
+  ink.translate(CRASH_OVERLAY_SIZE / 2, CRASH_OVERLAY_SIZE / 2);
   ink.scale(size, size);
   ink.translate(0, -13);
   ink.rotate(tilt);
@@ -1156,25 +1185,30 @@ const nightMountainRanges = [
   { ...mountainRanges[1], fill: '#141a2c', pines: true },
 ];
 
-function drawThreeSky() {
-  if (skyHeight !== height) {
+function drawSky(useGradient) {
+  if (useGradient && skyHeight !== height) {
     skyHeight = height;
     skyGradient = ink.createLinearGradient(0, 0, 0, height * .68);
     skyGradient.addColorStop(0, '#090d1b');
     skyGradient.addColorStop(.65, '#202840');
     skyGradient.addColorStop(1, '#454b62');
   }
-  ink.fillStyle = skyGradient;
-  ink.fillRect(-6, -6, width + 12, height + 12);
-  ink.fillStyle = 'rgba(241, 240, 226, .55)';
-  for (const [x, y] of nightStars) ink.fillRect(x * width, y * height, 1.4, 1.4);
-  const radius = clamp(Math.min(width, height) * .047, 14, 48);
+  if (useGradient) {
+    ink.fillStyle = skyGradient;
+    ink.fillRect(-6, -6, width + 12, height + 12);
+  }
+  const daylight = activeTheme === 'light';
+  if (!daylight) {
+    ink.fillStyle = 'rgba(241, 240, 226, .55)';
+    for (const [x, y] of nightStars) ink.fillRect(x * width, y * height, 1.4, 1.4);
+  }
+  const radius = clamp(Math.min(width, height) * .029, 10, 32);
   ink.save();
-  ink.shadowColor = 'rgba(255, 200, 147, .4)';
-  ink.shadowBlur = 19 * pixelRatio;
-  ink.fillStyle = '#e9be94';
+  ink.shadowColor = daylight ? 'rgba(222, 184, 87, .20)' : 'rgba(255, 218, 177, .26)';
+  ink.shadowBlur = 12 * pixelRatio;
+  ink.fillStyle = daylight ? '#ead497' : '#e9d4b1';
   ink.beginPath();
-  ink.arc(width * .77, height * .39, radius, 0, TURN);
+  ink.arc(width * .81, height * .24, radius, 0, TURN);
   ink.fill();
   ink.restore();
 }
@@ -1197,9 +1231,10 @@ function drawThreeTraffic(front, player, rear, frontColor, playerColor, rearColo
   threeView.suspension = settings.suspension;
   threeView.brakePitch = run.brakePitch;
   threeView.braking = run.braking;
+  threeView.impact = Boolean(run.impact);
   threeView.light = activeTheme === 'light';
   try {
-    if (threeScene.draw(threeView)) return true;
+    if (threeScene.draw(threeView, drawForeground)) return true;
   } catch (error) {
     console.warn('Three.js rendering unavailable. Using Canvas 2D.', error);
   }
@@ -1211,7 +1246,7 @@ function drawThreeTraffic(front, player, rear, frontColor, playerColor, rearColo
 async function initializeThreeScene() {
   if (platform || new URLSearchParams(location.search).get('renderer') === '2d') return;
   try {
-    const { createThreeScene } = await import('./scene-3d.mjs');
+    const { createThreeScene } = await import('./scene-3d.mjs?v=milestone-depth');
     threeScene = createThreeScene(game, {
       angle: ANGLE, carScale: CAR_SCALE, halfLength: BODY_HALF_LENGTH,
       wheelRadius: WHEEL_RADIUS, wheelOffsets: WHEEL_OFFSETS, roadHeight,
@@ -1219,6 +1254,86 @@ async function initializeThreeScene() {
   } catch (error) {
     console.warn('Three.js unavailable. Using Canvas 2D.', error);
   }
+}
+
+const foregroundTrees = [
+  new Path2D('M-2 2 V-9 H-13 L-7-20 H-11 L0-39 L11-20 H7 L13-9 H2 V2Z'),
+  new Path2D('M-2 2 V-6 H-10 L-5-17 H-8 L-3-27 H-5 L1-41 L7-27 H5 L10-17 H7 L12-6 H2 V2Z'),
+  new Path2D('M-3 2 V-6 H-18 L-10-17 H-15 L-7-26 H-10 L-2-36 L10-24 H7 L16-16 H11 L20-6 H3 V2Z'),
+];
+
+const foregroundBush = new Path2D('M-24 2 L-23-3 L-17-4 L-23-10 L-13-9 L-15-16 L-6-12 L-3-20 L2-13 L9-17 L9-10 L19-13 L16-6 L25-7 L21 2Z');
+
+let foregroundFade;
+let foregroundFadeKey;
+
+function foregroundVariation(index, seed) {
+  let value = Math.imul(index ^ seed, 0x45d9f3b);
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  return ((value ^ (value >>> 16)) >>> 0) / 4294967296;
+}
+
+function drawForeground(position, roadY, shakeX, shakeY) {
+  const ink = foregroundInk;
+  const ratio = Math.min(pixelRatio, 1.5);
+  ink.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ink.clearRect(0, 0, width, height);
+  ink.translate(shakeX, shakeY);
+  if (threeScene) {
+    ink.save();
+    ink.translate(width / 2, roadY);
+    drawMilestones(ink, position);
+    ink.restore();
+  }
+  const spacing = Math.min(width * .34, Math.max(65, height * .42));
+  const light = activeTheme === 'light';
+  for (let layer = 0; layer < 2; layer++) {
+    const travel = reducedMotion?.matches ? 0 : position * scale * (layer ? .68 : .43);
+    const first = Math.floor(travel / spacing) - 2;
+    const count = Math.ceil(width / spacing) + 4;
+    const groundY = height * (layer ? .955 : .90);
+    ink.fillStyle = light ? (layer ? '#b9bdb5' : '#c5c8c1') : (layer ? '#0e1320' : '#171e2e');
+    ink.fillRect(-5, groundY, width + 10, height - groundY + 5);
+    for (let cell = first; cell <= first + count; cell++) {
+      // Each repeating group has a planted patch and an open stretch.
+      const patch = Math.floor(cell / 5);
+      const slot = cell - patch * 5;
+      const seed = 41 + layer * 101;
+      const start = patch === 0 ? 0 : Math.floor(foregroundVariation(patch, seed) * 2);
+      const length = 3 + Number(foregroundVariation(patch, seed + 7) > .72);
+      if (slot < start || slot >= start + length) continue;
+
+      const spacingVariation = foregroundVariation(cell, seed + 31);
+      const offset = cell === 0 ? (layer ? .69 : .24) : spacingVariation * .48 + layer * .52;
+      const x = (cell + offset) * spacing - travel;
+      const shapeVariation = foregroundVariation(cell, seed + 89);
+      const bush = cell === 0 ? layer === 0 : shapeVariation < .18;
+      const plant = bush ? foregroundBush : foregroundTrees[Math.floor(shapeVariation * foregroundTrees.length)];
+      const sizeVariation = foregroundVariation(cell, seed + 131);
+      const plantHeight = height * (layer ? .52 : .37) * (.58 + sizeVariation * .62);
+      const plantSize = plantHeight / 39 * .8;
+      const spread = .64 + foregroundVariation(cell, seed + 179) * .42;
+      ink.save();
+      ink.translate(x, groundY);
+      ink.scale(plantSize * spread * (cell % 2 ? -1 : 1), plantSize);
+      ink.fill(plant);
+      ink.restore();
+    }
+  }
+  ink.globalAlpha = 1;
+  ink.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const fadeStart = height * .56;
+  const fadeKey = `${height}:${ratio}:${palette.background}`;
+  if (foregroundFadeKey !== fadeKey) {
+    foregroundFadeKey = fadeKey;
+    const [r, g, b] = rgbChannels(palette.background);
+    foregroundFade = ink.createLinearGradient(0, fadeStart, 0, height * .87);
+    foregroundFade.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0)`);
+    foregroundFade.addColorStop(.45, `rgba(${r}, ${g}, ${b}, .30)`);
+    foregroundFade.addColorStop(1, palette.background);
+  }
+  ink.fillStyle = foregroundFade;
+  ink.fillRect(0, fadeStart, width, height - fadeStart);
 }
 
 function render() {
@@ -1235,17 +1350,12 @@ function render() {
   }
   const { front, player, rear } = run;
   const night = threeScene && activeTheme === 'dark';
-  if (night) drawThreeSky();
+  drawSky(night);
   drawRunScore();
-  const idleDrift = reducedMotion?.matches ? 0 : Math.sin(idleTime * 0.55) * 110;
-  const driftBlend = state === 'ready' ? 1 : Math.max(0, 1 - run.time / 0.8);
-  const backdropPosition = player.position + idleDrift * driftBlend;
-  for (const range of night ? nightMountainRanges : mountainRanges) drawMountainRange(backdropPosition, range);
+  for (const range of night ? nightMountainRanges : mountainRanges) drawMountainRange(player.position, range);
+  const roadY = height * 0.51 + Math.min(height * 0.025, 20);
+  drawRoadForeground(player.position, roadY, night);
   drawRain();
-  ink.translate(width / 2, height * 0.51 + Math.min(height * 0.025, 20));
-  ink.rotate(ANGLE);
-  ink.scale(scale, scale);
-  drawRoad(player.position);
 
   const gap = gaps();
   const frontDanger = dangerLevel(gap.front, player.speed - front.speed, run.nearMiss.front.glow);
@@ -1253,22 +1363,29 @@ function render() {
   const frontImpact = run.impact === 'front';
   const rearImpact = run.impact === 'rear';
   const playerDanger = run.impact ? 1 : Math.max(frontDanger, rearDanger);
-  const playerColor = run.impact ? palette.warning : playerDanger > 0 ? dangerColor(playerDanger) : palette.playerOutline;
+  const playerColor = run.impact ? palette.warning : palette.playerOutline;
 
   const frontColor = frontImpact ? palette.warning : dangerColor(frontDanger);
   const rearColor = rearImpact ? palette.warning : dangerColor(rearDanger);
   const frontWarning = frontImpact ? 1 : frontDanger;
   const rearWarning = rearImpact ? 1 : rearDanger;
-  if (!drawThreeTraffic(front, player, rear, frontColor, playerColor, rearColor,
-    frontWarning, playerDanger, rearWarning, shakeX, shakeY)) {
+  const renderedThree = drawThreeTraffic(front, player, rear, frontColor, palette.warning, rearColor,
+    frontWarning, playerDanger, rearWarning, shakeX, shakeY);
+  ink.translate(width / 2, roadY);
+  if (!renderedThree) {
+    drawMilestones(ink, player.position);
+    ink.rotate(ANGLE);
+    ink.scale(scale, scale);
     drawCar(run.tail, player.position, palette.outerCar);
-    drawCar(rear, player.position, rearColor, 0, rearWarning);
-    drawCar(player, player.position, playerColor, run.brakePitch, playerDanger);
-    drawCar(front, player.position, frontColor, 0, frontWarning);
+    drawCar(rear, player.position, rearImpact ? palette.warning : dangerColor(0), 0, rearWarning);
+    drawCar(player, player.position, playerColor, run.brakePitch, run.impact ? 1 : 0);
+    drawCar(front, player.position, frontImpact ? palette.warning : dangerColor(0), 0, frontWarning);
     drawCar(run.lead, player.position, palette.outerCar);
   }
 
-  if (run.impact) drawCollisionWarning(player.position);
+  if (!renderedThree) drawForeground(player.position, roadY, shakeX, shakeY);
+  if (run.impact) drawCollisionWarning(player.position, roadY, shakeX, shakeY);
+  else crashOverlay.hidden = true;
 }
 
 function finishRun() {
@@ -1303,10 +1420,12 @@ function frame(now) {
   } else {
     const dt = lastFrame === null ? 0 : Math.min((now - lastFrame) / 1000, 0.05);
     lastFrame = now;
-    if (state === 'ready' && !reducedMotion?.matches) idleTime += dt;
     if (run.milestoneStamp) {
       run.milestoneStamp.age += dt;
-      if (run.milestoneStamp.age >= STAMP_DURATION) run.milestoneStamp = null;
+      if (run.milestoneStamp.age >= STAMP_LIFETIME) run.milestoneStamp = null;
+    }
+    for (const marker of run.overtakeMarkers) {
+      if (marker.stampAge !== null && marker.stampAge < STAMP_LIFETIME) marker.stampAge += dt;
     }
     if (state === 'running') {
       const previousLaunchTime = run.launchTime;
@@ -1547,7 +1666,7 @@ themeToggle.addEventListener('click', () => {
 });
 applyTheme(readStorage('brake.theme'));
 
-document.fonts?.load('400 16px "Inter"').catch(() => {});
+document.fonts?.load('400 16px "Open Sans"').catch(() => {});
 run = freshRun();
 panelStatus.textContent = pickStatusMessage(startMessages);
 updateScore();

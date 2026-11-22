@@ -8,7 +8,7 @@ const output = resolve(destination);
 await mkdir(output);
 
 const files = [
-  'style.css', 'game.js', 'assets/font/Inter-Variable.ttf', 'assets/font/Inter-OFL.txt',
+  'style.css', 'game.js', 'assets/font/OpenSans-Regular.ttf', 'assets/font/OpenSans-Bold.ttf', 'assets/font/OpenSans-OFL.txt',
   'assets/icon/gameicon.jpg', 'assets/icon/dark.svg', 'assets/icon/light.svg', 'assets/icon/driver.svg',
   'assets/icon/start.svg', 'assets/icon/restart.svg', 'assets/icon/sound on.svg',
   'assets/icon/sound off.svg',
